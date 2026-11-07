@@ -9,7 +9,7 @@ export function ToolList() {
           <li key={tool.name} className="flex flex-wrap items-baseline gap-x-6 gap-y-1 py-4">
             <span className="font-medium sm:w-56">{tool.name}</span>
             <span className="flex-1 text-muted-foreground">{tool.description}</span>
-            <span className={tool.available ? "text-sm text-gold" : "text-sm text-muted-foreground"}>
+            <span className={tool.available ? "text-sm font-medium text-primary" : "text-sm text-muted-foreground"}>
               {tool.available ? "사용 가능" : "준비 중"}
             </span>
           </li>

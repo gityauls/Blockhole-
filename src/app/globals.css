@@ -7,9 +7,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-noto), ui-sans-serif, system-ui, sans-serif;
-  --font-latin: var(--font-nanum-coding), ui-monospace, monospace;
-  --color-gold: var(--gold);
+  --font-sans: var(--font-inter), "Pretendard Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-latin: var(--font-manrope), var(--font-sans);
   --font-heading: var(--font-sans);
   --color-ring: var(--ring);
   --color-input: var(--input);
@@ -37,29 +36,30 @@
 }
 
 :root {
-  /* Palette sampled from the portal artwork in public/brand. */
-  color-scheme: dark;
-  --background: #15133c;
-  --foreground: #eef0fa;
-  --card: #1f1d52;
-  --card-foreground: #eef0fa;
-  --popover: #1f1d52;
-  --popover-foreground: #eef0fa;
-  --primary: #f0b030;
-  --primary-foreground: #15133c;
-  --secondary: #303060;
-  --secondary-foreground: #eef0fa;
-  --muted: #303060;
-  --muted-foreground: #b4b8dc;
-  --accent: #303060;
-  --accent-foreground: #eef0fa;
-  --destructive: #ff9d8f;
-  --border: #3d3d78;
-  --input: #3d3d78;
-  --ring: #4fc3f7;
-  --gold: #f0b030;
-  --drop-edge: #8486cc;
-  --radius: 0.25rem;
+  /* Indigo sampled from the portal artwork in public/brand. */
+  color-scheme: light;
+  --background: #f7f7fc;
+  --foreground: #1b1a4b;
+  --card: #ffffff;
+  --card-foreground: #1b1a4b;
+  --popover: #ffffff;
+  --popover-foreground: #1b1a4b;
+  --primary: #3d3aa8;
+  --primary-foreground: #ffffff;
+  --primary-hover: #2f2d8c;
+  --secondary: #eeeef8;
+  --secondary-foreground: #1b1a4b;
+  --muted: #eeeef8;
+  --muted-foreground: #5b5c86;
+  --accent: #eeeef8;
+  --accent-foreground: #1b1a4b;
+  --destructive: #c2342b;
+  --border: #e1e1f0;
+  --input: #e1e1f0;
+  --ring: #3d3aa8;
+  --drop-edge: #a9abd9;
+  --selected: #f0f0fb;
+  --radius: 0.625rem;
 }
 
 @layer base {
@@ -79,68 +79,59 @@
 
 @layer components {
   .font-display {
-    font-weight: 900;
+    font-weight: 700;
     letter-spacing: -0.02em;
   }
 
-  /* Notched corners: a 4px shadow on each side leaves the corner pixel empty. */
-  .pixel-button,
-  .pixel-panel,
-  .format-tile {
-    --edge: var(--border);
-    box-shadow:
-      -4px 0 0 var(--edge),
-      4px 0 0 var(--edge),
-      0 -4px 0 var(--edge),
-      0 4px 0 var(--edge);
-  }
-
-  .pixel-button {
-    --edge: #a8711a;
+  .primary-button {
     display: inline-block;
-    margin: 4px;
-    padding: 0.625rem 1.5rem;
-    background: var(--gold);
+    padding: 0.75rem 1.5rem;
+    border-radius: 0.625rem;
+    background: var(--primary);
     color: var(--primary-foreground);
-    font-size: 1.125rem;
-    line-height: 1.75rem;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
+    transition: background-color 0.15s;
   }
-  .pixel-button:hover:not(:disabled) {
-    background: #f8c95e;
+  .primary-button:hover:not(:disabled) {
+    background: var(--primary-hover);
   }
-  .pixel-button:active:not(:disabled) {
-    transform: translateY(2px);
-  }
-  .pixel-button:disabled {
-    --edge: var(--border);
-    background: var(--secondary);
+  .primary-button:disabled {
+    background: var(--muted);
     color: var(--muted-foreground);
     cursor: not-allowed;
   }
 
-  .pixel-panel {
-    margin: 4px;
-    padding: 1.25rem;
+  .panel {
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 1rem;
     background: var(--card);
   }
 
   .format-tile {
     display: block;
-    margin: 4px;
     padding: 0.625rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
     text-align: center;
     color: var(--muted-foreground);
     cursor: pointer;
+    transition:
+      border-color 0.15s,
+      background-color 0.15s;
+  }
+  .format-tile:hover {
+    border-color: var(--drop-edge);
   }
   .format-tile:has(:checked) {
-    --edge: var(--gold);
+    border-color: var(--primary);
+    background: var(--selected);
     color: var(--foreground);
   }
   .format-tile:has(:focus-visible) {
     outline: 2px solid var(--ring);
-    outline-offset: 6px;
+    outline-offset: 2px;
   }
   fieldset:disabled .format-tile {
     opacity: 0.6;
@@ -165,15 +156,19 @@
     max-width: 26rem;
     margin-inline: auto;
     padding: 1rem 0.75rem 1.5rem;
-    text-align: center;
+    border: 2px dashed var(--drop-edge);
+    border-radius: 1rem;
     background: var(--card);
-    border: 3px dashed var(--drop-edge);
+    text-align: center;
     cursor: pointer;
-    transition: border-color 0.15s;
+    transition:
+      border-color 0.15s,
+      background-color 0.15s;
   }
   .drop-zone:hover,
   .drop-zone:focus-within {
-    border-color: var(--gold);
+    border-color: var(--primary);
+    background: var(--selected);
   }
 
   /* Touch devices have no file drag, so only the button applies there. */
@@ -183,10 +178,10 @@
     }
   }
 
-  .pixel-button:focus-visible,
+  .primary-button:focus-visible,
   .text-link:focus-visible {
     outline: 2px solid var(--ring);
-    outline-offset: 6px;
+    outline-offset: 2px;
   }
 
   .skip-link {

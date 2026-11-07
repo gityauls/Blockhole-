@@ -128,7 +128,7 @@ export function FileConverter() {
             </p>
           </>
         ) : (
-          <div className="pixel-panel">
+          <div className="panel">
             <h1 className="font-display text-2xl">
               {kind === "pdf" ? "PDF 작업" : "이미지 변환"}
             </h1>
@@ -201,7 +201,7 @@ export function FileConverter() {
                   value={ranges}
                   disabled={busy}
                   placeholder="예: 1-3, 5"
-                  className="mt-1 block w-full border-2 border-border bg-background px-3 py-2"
+                  className="mt-1 block w-full rounded-lg border border-border bg-card px-3 py-2"
                   onChange={(event) => {
                     clearResults();
                     setRanges(event.target.value);
@@ -212,13 +212,13 @@ export function FileConverter() {
 
             <div className="mt-6 flex flex-wrap items-center gap-4">
               {outputs.length > 0 ? (
-                <button type="button" className="pixel-button" onClick={saveAll}>
+                <button type="button" className="primary-button" onClick={saveAll}>
                   {outputs.length > 1 ? "모두 저장 (ZIP)" : "저장"}
                 </button>
               ) : (
                 <button
                   type="button"
-                  className="pixel-button"
+                  className="primary-button"
                   disabled={!target || busy}
                   onClick={run}
                 >
@@ -282,7 +282,7 @@ export function FileConverter() {
         onBlur={() => setHovering(false)}
       >
         <Portal open={hovering || busy} className="size-80" />
-        <button type="button" className="pixel-button">
+        <button type="button" className="primary-button">
           파일 선택
         </button>
         <p className="drop-hint mt-3 font-medium">또는 파일을 여기로 끌어다 놓으세요</p>
