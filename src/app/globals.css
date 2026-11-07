@@ -7,22 +7,10 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+  --font-sans: var(--font-noto), ui-sans-serif, system-ui, sans-serif;
+  --font-latin: var(--font-nanum-coding), ui-monospace, monospace;
+  --color-gold: var(--gold);
   --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -49,72 +37,29 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
-}
-
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  /* Palette sampled from the portal artwork in public/brand. */
+  color-scheme: dark;
+  --background: #15133c;
+  --foreground: #eef0fa;
+  --card: #1f1d52;
+  --card-foreground: #eef0fa;
+  --popover: #1f1d52;
+  --popover-foreground: #eef0fa;
+  --primary: #f0b030;
+  --primary-foreground: #15133c;
+  --secondary: #303060;
+  --secondary-foreground: #eef0fa;
+  --muted: #303060;
+  --muted-foreground: #b4b8dc;
+  --accent: #303060;
+  --accent-foreground: #eef0fa;
+  --destructive: #ff9d8f;
+  --border: #3d3d78;
+  --input: #3d3d78;
+  --ring: #4fc3f7;
+  --gold: #f0b030;
+  --drop-edge: #8486cc;
+  --radius: 0.25rem;
 }
 
 @layer base {
@@ -123,8 +68,136 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Korean wraps between words; long file names may still break. */
+    word-break: keep-all;
+    overflow-wrap: anywhere;
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer components {
+  .font-display {
+    font-weight: 900;
+    letter-spacing: -0.02em;
+  }
+
+  /* Notched corners: a 4px shadow on each side leaves the corner pixel empty. */
+  .pixel-button,
+  .pixel-panel,
+  .format-tile {
+    --edge: var(--border);
+    box-shadow:
+      -4px 0 0 var(--edge),
+      4px 0 0 var(--edge),
+      0 -4px 0 var(--edge),
+      0 4px 0 var(--edge);
+  }
+
+  .pixel-button {
+    --edge: #a8711a;
+    display: inline-block;
+    margin: 4px;
+    padding: 0.625rem 1.5rem;
+    background: var(--gold);
+    color: var(--primary-foreground);
+    font-size: 1.125rem;
+    line-height: 1.75rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .pixel-button:hover:not(:disabled) {
+    background: #f8c95e;
+  }
+  .pixel-button:active:not(:disabled) {
+    transform: translateY(2px);
+  }
+  .pixel-button:disabled {
+    --edge: var(--border);
+    background: var(--secondary);
+    color: var(--muted-foreground);
+    cursor: not-allowed;
+  }
+
+  .pixel-panel {
+    margin: 4px;
+    padding: 1.25rem;
+    background: var(--card);
+  }
+
+  .format-tile {
+    display: block;
+    margin: 4px;
+    padding: 0.625rem 0.5rem;
+    text-align: center;
+    color: var(--muted-foreground);
+    cursor: pointer;
+  }
+  .format-tile:has(:checked) {
+    --edge: var(--gold);
+    color: var(--foreground);
+  }
+  .format-tile:has(:focus-visible) {
+    outline: 2px solid var(--ring);
+    outline-offset: 6px;
+  }
+  fieldset:disabled .format-tile {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .text-link {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+    cursor: pointer;
+  }
+  .text-link:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 26rem;
+    margin-inline: auto;
+    padding: 1rem 0.75rem 1.5rem;
+    text-align: center;
+    background: var(--card);
+    border: 3px dashed var(--drop-edge);
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .drop-zone:hover,
+  .drop-zone:focus-within {
+    border-color: var(--gold);
+  }
+
+  /* Touch devices have no file drag, so only the button applies there. */
+  @media (pointer: coarse) {
+    .drop-hint {
+      display: none;
+    }
+  }
+
+  .pixel-button:focus-visible,
+  .text-link:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 6px;
+  }
+
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+  }
+  .skip-link:focus {
+    left: 1rem;
+    top: 1rem;
+    z-index: 60;
+    padding: 0.5rem 1rem;
+    background: var(--card);
   }
 }

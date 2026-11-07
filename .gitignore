@@ -47,3 +47,6 @@ next-env.d.ts
 
 # Local temp files
 temp/
+
+# raw captures of third-party sites (reference only, not redistributed)
+docs/research/*/screenshots/
