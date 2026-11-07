@@ -11,6 +11,8 @@ type RunOptions = {
   onProgress?: (message: string) => void;
 };
 
+const OFFICE_USE = { "pdf-docx": "docx", "pdf-xlsx": "xlsx", "pdf-pptx": "pptx" } as const;
+
 const baseName = (name: string) => outputName(name, "").slice(0, -1);
 const bytesOf = async (file: File) => new Uint8Array(await file.arrayBuffer());
 const pdfBlob = (bytes: Uint8Array) =>
@@ -69,6 +71,19 @@ async function fileOutputs(
       const { pdfToText } = await import("@/lib/pdf/render");
       const text = await pdfToText(await bytesOf(file));
       return [{ name: `${base}.txt`, blob: new Blob([text], { type: "text/plain;charset=utf-8" }) }];
+    }
+    case "pdf-docx":
+    case "pdf-xlsx":
+    case "pdf-pptx": {
+      const { readPages } = await import("@/lib/pdf/render");
+      const { toDocx, toPptx, toXlsx } = await import("@/lib/pdf/to-office");
+      const use = OFFICE_USE[target];
+      const pages = await readPages(await bytesOf(file), use, (page, total) =>
+        onProgress?.(`${file.name} ${page}/${total}쪽`),
+      );
+      onProgress?.(`${file.name} 파일 만드는 중`);
+      const build = { docx: toDocx, xlsx: toXlsx, pptx: toPptx }[use];
+      return [{ name: `${base}.${use}`, blob: await build(pages) }];
     }
     default: {
       const format = target as OutputFormat;

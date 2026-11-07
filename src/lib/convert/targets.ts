@@ -9,7 +9,10 @@ export type TargetId =
   | "pdf-merge"
   | "pdf-split"
   | "pdf-jpg"
-  | "pdf-txt";
+  | "pdf-txt"
+  | "pdf-docx"
+  | "pdf-xlsx"
+  | "pdf-pptx";
 
 export type Target = {
   id: TargetId;
@@ -40,6 +43,9 @@ const PDF_TARGETS: Target[] = [
   { id: "pdf-split", label: "나누기", hint: "페이지별 또는 범위", action: "나누기" },
   { id: "pdf-jpg", label: "JPG", hint: "페이지를 이미지로", action: "변환하기" },
   { id: "pdf-txt", label: "TXT", hint: "글자만 추출", action: "변환하기" },
+  { id: "pdf-docx", label: "Word", hint: "문단과 글자 편집", action: "변환하기" },
+  { id: "pdf-xlsx", label: "Excel", hint: "표를 칸으로 나누기", action: "변환하기" },
+  { id: "pdf-pptx", label: "PPT", hint: "페이지를 슬라이드로", action: "변환하기" },
 ];
 
 export function targetsFor(kind: FileKind, fileCount: number): Target[] {

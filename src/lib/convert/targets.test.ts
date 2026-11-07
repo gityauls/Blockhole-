@@ -9,7 +9,14 @@ describe("targetsFor", () => {
   });
 
   it("offers merging only with two or more PDFs", () => {
-    expect(targetsFor("pdf", 1).map((t) => t.id)).toEqual(["pdf-split", "pdf-jpg", "pdf-txt"]);
+    expect(targetsFor("pdf", 1).map((t) => t.id)).toEqual([
+      "pdf-split",
+      "pdf-jpg",
+      "pdf-txt",
+      "pdf-docx",
+      "pdf-xlsx",
+      "pdf-pptx",
+    ]);
     expect(targetsFor("pdf", 2).map((t) => t.id)).toContain("pdf-merge");
   });
 });

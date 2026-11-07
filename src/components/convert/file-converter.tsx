@@ -181,7 +181,7 @@ export function FileConverter() {
                       }}
                     />
                     <span
-                      className={/^[A-Z]+$/.test(label) ? "font-latin text-xl font-bold" : "text-xl font-bold"}
+                      className={/^[A-Za-z]+$/.test(label) ? "font-latin text-xl font-bold" : "text-xl font-bold"}
                     >
                       {label}
                     </span>
