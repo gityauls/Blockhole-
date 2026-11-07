@@ -17,7 +17,7 @@
 - 구현 현황:
   - [x] 공통 틀, 창 전체 드롭, 포털 브랜드 화면
   - [x] 이미지 변환 (JPG, PNG, WEBP, BMP, ZIP 일괄 저장)
-  - [ ] PDF 병합·분할, 이미지 → PDF, PDF → JPG·TXT
+  - [x] PDF 병합·분할, 이미지 → PDF, PDF → JPG·TXT
   - [ ] PDF → Word·Excel·PPT
   - [ ] 압축 파일 → ZIP
 
@@ -33,4 +33,6 @@
 
 ## 4단계: 완성 및 배포
 - 공개 전 점검: [PROJECT.md의 공개 전 원칙](PROJECT.md#공개-전-원칙)
+- 사이트에 오픈소스 라이선스 고지 페이지 추가 (pdf-lib, pdf.js, fflate, 폰트 등)
+- 호스팅은 무료 범위에서 Vercel과 Supabase 계정을 활용한다. 연결 전에 사용자에게 먼저 알린다.
 - 완료 기준: 실제 주소로 접속해 변환이 동작한다.

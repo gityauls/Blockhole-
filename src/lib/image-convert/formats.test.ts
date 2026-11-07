@@ -14,7 +14,7 @@ describe("rejectReason", () => {
   });
 
   it("rejects unsupported or missing extensions by name", () => {
-    expect(rejectReason({ name: "a.pdf", size: 10 })).toContain("a.pdf");
+    expect(rejectReason({ name: "a.docx", size: 10 })).toContain("a.docx");
     expect(rejectReason({ name: "noext", size: 10 })).toContain("noext");
   });
 

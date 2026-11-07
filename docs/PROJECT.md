@@ -11,6 +11,8 @@
 ## 기술 스택
 Next.js 16, React 19, TypeScript strict, Tailwind CSS v4, shadcn/ui. 코드 규칙은 저장소의 `AGENTS.md`를 따릅니다.
 
+변환 라이브러리: pdf-lib(MIT), pdfjs-dist(Apache-2.0), fflate(MIT). 모두 브라우저에서 동작하며 파일을 서버로 보내지 않습니다.
+
 ## 브랜드
 - 중심 자산: `public/brand/portal.gif` (닫힌 문 → 블랙홀 → 드롭 표시 → 닫힘). 평소에는 닫힌 정지 화면이고, 사용자가 다가가거나 드래그할 때만 움직인다.
 - 색상: 포털 그림에서 추출해 `src/app/globals.css`의 `:root`에 정의했다.

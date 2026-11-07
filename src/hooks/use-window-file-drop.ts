@@ -1,12 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const hasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files") ?? false;
 
 /** Treats the whole window as a drop target and reports while files hover over it. */
 export function useWindowFileDrop(onFiles: (files: File[]) => void): boolean {
   const [dragging, setDragging] = useState(false);
+
+  // Listeners stay attached across renders, so read the newest callback from a ref.
+  const latestOnFiles = useRef(onFiles);
+  useEffect(() => {
+    latestOnFiles.current = onFiles;
+  });
 
   useEffect(() => {
     // dragenter/dragleave fire for every child element, so count the nesting.
@@ -31,7 +37,7 @@ export function useWindowFileDrop(onFiles: (files: File[]) => void): boolean {
       event.preventDefault();
       depth = 0;
       setDragging(false);
-      onFiles(Array.from(event.dataTransfer?.files ?? []));
+      latestOnFiles.current(Array.from(event.dataTransfer?.files ?? []));
     };
 
     window.addEventListener("dragenter", onEnter);
@@ -44,7 +50,7 @@ export function useWindowFileDrop(onFiles: (files: File[]) => void): boolean {
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
     };
-  }, [onFiles]);
+  }, []);
 
   return dragging;
 }
