@@ -11,6 +11,8 @@ import {
   textBoxes,
 } from "./layout";
 import { type Cell, type CellParagraph, type TableBlock, continueTable, findTables } from "./tables";
+import { unimpose } from "./imposition";
+import { takePageNumbers } from "./page-numbers";
 import { type Sheet, buildXlsx } from "./xlsx";
 
 // Named, not embedded: Office shows it from the reader's own fonts.
@@ -60,6 +62,78 @@ export function leadingFor(ratio: number): Leading {
   };
 }
 
+// Advance widths of the document font, Malgun Gothic, as Word sets it, in font sizes. Measured from Word's PDFs.
+function malgunAdvance(char: string): number {
+  if (/[ᄀ-ᇿ　-鿿가-힯＀-￯]/.test(char)) return 1;
+  if (char === " ") return 0.506;
+  if (/[0-9]/.test(char)) return 0.551;
+  if (/[a-z]/.test(char)) return 0.5;
+  if (/[A-Z]/.test(char)) return 0.6;
+  if (/[()[\]{}]/.test(char)) return 0.313;
+  if (/[,.:;'`]/.test(char)) return 0.22;
+  if (/[-/*•"~]/.test(char)) return 0.41;
+  return char.charCodeAt(0) < 0x2000 ? 0.5 : 1;
+}
+
+// A line this short says too little about its spacing.
+const MIN_TRACKING_SAMPLE = 8;
+const MIN_HANGUL_SHARE = 0.6;
+const TRACKING_TOLERANCE = 0.02;
+const MAX_TRACKING = 0.1;
+const MIN_TRACKING = -0.15;
+
+/**
+ * Letter spacing of a line, in font sizes per character: how much wider or narrower it was set than Malgun Gothic
+ * at normal spacing. Hangul word processors often tighten text (the textbook's .hwp sets -1% to -8% on a third of
+ * its characters), and without matching it Word fits fewer characters on a line and wraps earlier.
+ */
+export function trackingOf(sample: { text: string; width: number }, size: number): number | null {
+  const chars = [...sample.text];
+  if (chars.length < MIN_TRACKING_SAMPLE) return null;
+  // Only Hangul widths are known exactly (one font size each); a line full of symbols and Latin says too little.
+  const hangul = chars.filter((char) => /[가-힯]/.test(char)).length;
+  if (hangul < chars.length * MIN_HANGUL_SHARE) return null;
+  const natural = chars.reduce((sum, char) => sum + malgunAdvance(char), 0) * size;
+  return (sample.width - natural) / chars.length / size;
+}
+
+/** Letter spacing in twips for a paragraph, from its own last line or else the typical spacing around it. */
+type Tracking = (size: number, sample?: { text: string; width: number }) => number | undefined;
+
+function median(values: number[]): number | null {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted.length ? sorted[sorted.length >> 1] : null;
+}
+
+export function trackingFor(samples: { size: number; last?: { text: string; width: number } }[]): Tracking {
+  const typical =
+    median(samples.flatMap((p) => (p.last ? [trackingOf(p.last, p.size)] : [])).filter((r): r is number => r !== null)) ?? 0;
+  return (size, sample) => {
+    const ratio = (sample && trackingOf(sample, size)) ?? typical;
+    if (Math.abs(ratio) < TRACKING_TOLERANCE) return undefined;
+    return Math.round(Math.min(MAX_TRACKING, Math.max(MIN_TRACKING, ratio)) * size * TWIPS_PER_POINT);
+  };
+}
+
+/** How text is set in one context, body or table cells: line spacing and letter spacing. */
+type Typesetting = { leading: Leading; tracking: Tracking };
+
+function typesetting(paragraphs: { size: number; pitch?: number | null; last?: { text: string; width: number } }[]): Typesetting {
+  return { leading: leadingFor(lineRatio(paragraphs)), tracking: trackingFor(paragraphs) };
+}
+
+/**
+ * The line pitch for a cell paragraph in Word. Hangul word processors put line spacing between lines only, so a
+ * block of n lines is (n - 1) pitches plus one line, while Word gives every line, the last too, a full pitch.
+ * For text from such a program, spreading the block over n lines keeps rows as tall as they were. Text from Word
+ * (which breaks lines anywhere) already follows Word's rule.
+ */
+export function cellPitch(item: CellParagraph, wrap: Wrap): number | null | undefined {
+  if (wrap === "anywhere" || !item.pitch || !item.edges) return item.pitch;
+  const lines = Math.round((item.edges.last.y - item.edges.first.y) / item.pitch) + 1;
+  return lines > 1 ? ((lines - 1) * item.pitch + item.size) / lines : item.pitch;
+}
+
 /** Every paragraph in a table, nested tables included. */
 function cellParagraphsOf(table: TableBlock): CellParagraph[] {
   return table.cells.flatMap((cell) =>
@@ -81,7 +155,7 @@ function tableToDocx(
   block: TableBlock,
   maxWidth: number,
   centered: boolean,
-  leading: Leading,
+  set: Typesetting,
   indent = 0,
 ): InstanceType<Docx["Table"]> {
   const scale = Math.min(1, maxWidth / (block.width * TWIPS_PER_POINT));
@@ -92,14 +166,26 @@ function tableToDocx(
 
   const cellToDocx = (cell: Cell) => {
     const width = twips(block.columns.slice(cell.col, cell.col + cell.colSpan).reduce((a, b) => a + b, 0));
+    // A line that fitted in the source cell must fit here too, so a narrow cell gives up padding for its widest line.
+    const widest = Math.max(
+      0,
+      ...cell.items.flatMap((item) => (item.kind === "text" && item.edges ? [item.edges.first.width, item.edges.last.width] : [])),
+    );
+    const cellPadding = Math.max(0, Math.min(padding, Math.floor((width - twips(widest)) / 2)));
     const children: DocxChild[] = cell.items.map((item) =>
       item.kind === "table"
-        ? tableToDocx(d, item.table, width - padding * 2, false, leading)
+        ? tableToDocx(d, item.table, width - padding * 2, false, set)
         : new d.Paragraph({
             alignment: item.align,
-            spacing: { before: 0, after: 0, ...leading(item.size, item.pitch) },
+            spacing: { before: 0, after: 0, ...set.leading(item.size, cellPitch(item, block.wrap)) },
             children: [
-              new d.TextRun({ text: item.text, bold: item.bold, size: Math.round(item.size * 2), font: DOCUMENT_FONT }),
+              new d.TextRun({
+                text: item.text,
+                bold: item.bold,
+                size: Math.round(item.size * 2),
+                font: DOCUMENT_FONT,
+                characterSpacing: set.tracking(item.size, item.edges?.last),
+              }),
             ],
           }),
     );
@@ -111,6 +197,7 @@ function tableToDocx(
       columnSpan: cell.colSpan,
       width: { size: width, type: d.WidthType.DXA },
       verticalAlign: cell.vAlign,
+      ...(cellPadding < padding ? { margins: { left: cellPadding, right: cellPadding, top: 0, bottom: 0 } } : {}),
       shading: cell.shade ? { fill: cell.shade, type: d.ShadingType.CLEAR, color: "auto" } : undefined,
       borders: {
         top: cell.borders.top ? line : none,
@@ -285,23 +372,47 @@ async function withKoreanLayout(blob: Blob, wrap: Wrap): Promise<Blob> {
   return new Blob([zipSync(files)], { type: MIME.docx });
 }
 
-/** Pages in a row that share a column layout become one Word section. */
-type Section = { pages: number[]; columns: number; columnWidth: number; space: number };
+/** Pages in a row that share a page size and column layout become one Word section. */
+type Section = { pages: number[]; columns: number; geometry: PageGeometry; columnWidth: number; space: number };
 const MIN_COLUMN_SPACE = 12;
 
 /**
- * Groups pages into sections by their number of columns. Pages without text join the section before them. Two
- * columns are laid out as Word columns of equal width, separated by the narrowest gap the pages leave between them.
+ * Groups pages into sections by page size and number of columns. Pages without text join the section before them
+ * when they are the same size. Each page size gets the margins measured over all its pages, so that portrait and
+ * landscape pages in one document each keep theirs. Two columns are laid out as Word columns of equal width,
+ * separated by the narrowest gap the pages leave between them.
  */
-function sectionsOf(flows: PageFlow[], contentWidth: number): Section[] {
+function sectionsOf(pages: PageContent[], flows: PageFlow[], tables: TableBlock[][]): Section[] {
+  const sameSize = (a: PageContent, b: PageContent) => Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1;
+  const geometries = new Map<PageContent, PageGeometry>();
+  const geometryOf = (page: PageContent) => {
+    const known = [...geometries].find(([other]) => sameSize(other, page));
+    if (known) return known[1];
+    const indexes = pages.flatMap((other, index) => (sameSize(other, page) ? [index] : []));
+    const geometry = pageGeometry(
+      indexes.map((index) => pages[index]),
+      indexes.map((index) => tables[index]),
+    );
+    // A size with no text to measure keeps its own size with default margins.
+    const sized = geometry === DEFAULT_PAGE ? { ...DEFAULT_PAGE, width: page.width, height: page.height } : geometry;
+    geometries.set(page, sized);
+    return sized;
+  };
+
   const sections: Section[] = [];
   flows.forEach((flow, index) => {
     const columns = flow.columns.length;
     const last = sections.at(-1);
-    if (last && (last.columns === columns || flow.items.length === 0)) last.pages.push(index);
-    else sections.push({ pages: [index], columns, columnWidth: contentWidth, space: 0 });
+    const fits = last && sameSize(pages[last.pages[0]], pages[index]);
+    if (last && fits && (last.columns === columns || flow.items.length === 0)) last.pages.push(index);
+    else {
+      const geometry = geometryOf(pages[index]);
+      const contentWidth = geometry.width - geometry.left - geometry.right;
+      sections.push({ pages: [index], columns, geometry, columnWidth: contentWidth, space: 0 });
+    }
   });
   for (const section of sections) {
+    const contentWidth = section.geometry.width - section.geometry.left - section.geometry.right;
     if (section.columns < 2) continue;
     const double = section.pages.map((index) => flows[index].columns).filter((columns) => columns.length > 1);
     // Ragged lines end short of the column edge, so the widest reach on any page is the closest to it.
@@ -313,26 +424,39 @@ function sectionsOf(flows: PageFlow[], contentWidth: number): Section[] {
   return sections;
 }
 
-export async function toDocx(pages: PageContent[]): Promise<Blob> {
+export async function toDocx(source: PageContent[]): Promise<Blob> {
   const d = await import("docx");
+  // Two pages printed on one sheet become two pages again, and page numbers go to the footer as a field.
+  const { pages, numbers } = takePageNumbers(unimpose(source));
+  const footer =
+    numbers &&
+    new d.Footer({
+      children: [
+        new d.Paragraph({
+          alignment: numbers.align,
+          children: [
+            new d.TextRun({
+              children: [numbers.prefix, d.PageNumber.CURRENT, numbers.suffix],
+              size: Math.round(numbers.size * 2),
+              font: DOCUMENT_FONT,
+            }),
+          ],
+        }),
+      ],
+    });
   const flows = pages.map(pageFlow);
+  const wrap = pages.find((page) => page.wrap)?.wrap ?? "words";
+  // Body text and table cells are often set differently, so each gets its own typical spacing.
+  const body = typesetting(flows.flatMap((flow) => flow.items.flatMap((item) => ("table" in item ? [] : [item.paragraph]))));
+  const cells = typesetting(
+    flows.flatMap((flow) => flow.items.flatMap((item) => ("table" in item ? cellParagraphsOf(item.table) : []))),
+  );
   // Measured before tables are joined across pages, which changes their heights.
-  const geometry = pageGeometry(
+  const sections = sectionsOf(
     pages,
+    flows,
     flows.map((flow) => flow.items.flatMap((item) => ("table" in item ? [item.table] : []))),
   );
-  const contentWidth = geometry.width - geometry.left - geometry.right;
-  const wrap = pages.find((page) => page.wrap)?.wrap ?? "words";
-  const leading = leadingFor(
-    lineRatio(
-      flows.flatMap((flow) =>
-        flow.items.flatMap((item): { size: number; pitch?: number | null }[] =>
-          "table" in item ? cellParagraphsOf(item.table) : [item.paragraph],
-        ),
-      ),
-    ),
-  );
-  const sections = sectionsOf(flows, contentWidth);
   const sectionOf = new Map(sections.flatMap((section) => section.pages.map((index) => [index, section] as const)));
 
   // A table that runs onto the next page is one table in Word, which breaks it across pages itself.
@@ -386,18 +510,19 @@ export async function toDocx(pages: PageContent[]): Promise<Blob> {
         const neighbor = (other?: FlowItem) => (other?.column === item.column ? other : undefined);
         if ("table" in item) {
           // A table cannot start a page or column itself, and two tables in a row would merge into one.
+          // The paragraph that separates them is 1pt tall, so it does not push the table down a whole line.
           if (pageBreak || columnBreak || previousWasTable) {
             children.push(
               new d.Paragraph({
                 pageBreakBefore: pageBreak,
-                spacing: { before: 0, after: 0 },
+                spacing: { before: 0, after: 0, line: TWIPS_PER_POINT, lineRule: d.LineRuleType.EXACT },
                 children: columnBreak ? [new d.ColumnBreak()] : [],
               }),
             );
           }
           const indent = item.centered ? 0 : item.table.x - item.left;
           children.push(
-            tableToDocx(d, item.table, width - Math.max(0, indent) * TWIPS_PER_POINT, item.centered, leading, indent),
+            tableToDocx(d, item.table, width - Math.max(0, indent) * TWIPS_PER_POINT, item.centered, cells, indent),
           );
           previousWasTable = true;
           return;
@@ -410,7 +535,7 @@ export async function toDocx(pages: PageContent[]): Promise<Blob> {
             indent: item.centered ? undefined : indentOf(paragraph, item.left),
             spacing: {
               ...spacingAround(paragraph, neighbor(items[position - 1]), neighbor(items[position + 1])),
-              ...leading(paragraph.size, paragraph.pitch),
+              ...body.leading(paragraph.size, paragraph.pitch),
             },
             children: [
               ...(columnBreak ? [new d.ColumnBreak()] : []),
@@ -419,6 +544,7 @@ export async function toDocx(pages: PageContent[]): Promise<Blob> {
                 bold: paragraph.bold,
                 size: Math.round(paragraph.size * 2),
                 font: DOCUMENT_FONT,
+                characterSpacing: body.tracking(paragraph.size, paragraph.last),
               }),
             ],
           }),
@@ -446,16 +572,20 @@ export async function toDocx(pages: PageContent[]): Promise<Blob> {
     sections: sections.map((section, index) => ({
       properties: {
         page: {
-          size: { width: twips(geometry.width), height: twips(geometry.height) },
+          size: { width: twips(section.geometry.width), height: twips(section.geometry.height) },
           margin: {
-            top: twips(geometry.top),
-            right: twips(geometry.right),
-            bottom: twips(geometry.bottom),
-            left: twips(geometry.left),
+            top: twips(section.geometry.top),
+            right: twips(section.geometry.right),
+            bottom: twips(section.geometry.bottom),
+            left: twips(section.geometry.left),
+            // Word measures the footer from the page's bottom edge to the bottom of its line.
+            ...(numbers ? { footer: twips(Math.max(0, numbers.baselineFromBottom - numbers.size * LINE_DESCENT)) } : {}),
           },
+          ...(numbers && index === 0 ? { pageNumbers: { start: numbers.start } } : {}),
         },
         ...(section.columns > 1 ? { column: { count: 2, space: twips(section.space), equalWidth: true } } : {}),
       },
+      ...(footer ? { footers: { default: footer } } : {}),
       children: sectionChildren[index],
     })),
   });

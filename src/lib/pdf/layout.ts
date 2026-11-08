@@ -36,6 +36,8 @@ export type Paragraph = {
   firstX: number;
   restX: number | null;
   pitch: number | null;
+  /** Its last line, which is set at natural width even in justified text, to measure letter spacing from. */
+  last: { text: string; width: number };
 };
 
 /** Distance between the baselines of consecutive lines, or null for a single line. */
@@ -181,6 +183,7 @@ export function groupParagraphs(lines: Line[], wrap: Wrap = "words"): Paragraph[
         firstX: line.x,
         restX: null,
         pitch: null,
+        last: { text: line.text, width: line.width },
       });
       lineCount = 1;
     } else if (current && previous) {
@@ -189,6 +192,7 @@ export function groupParagraphs(lines: Line[], wrap: Wrap = "words"): Paragraph[
       current.pitch = (line.y - (current.y + current.size)) / (lineCount - 1);
       current.bottom = line.y;
       current.restX = Math.min(current.restX ?? line.x, line.x);
+      current.last = { text: line.text, width: line.width };
       const right = Math.max(current.x + current.width, line.x + line.width);
       current.x = Math.min(current.x, line.x);
       current.width = right - current.x;

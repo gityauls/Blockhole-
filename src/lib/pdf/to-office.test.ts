@@ -1,7 +1,7 @@
 import { strFromU8, unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import type { PageContent } from "./layout";
-import { pageGeometry, spacingAround, toDocx, toPptx, toXlsx } from "./to-office";
+import { cellPitch, pageGeometry, spacingAround, toDocx, toPptx, toXlsx, trackingOf } from "./to-office";
 
 // 1x1 JPEG
 const JPG = Uint8Array.from(
@@ -74,7 +74,7 @@ describe("pageGeometry", () => {
 });
 
 describe("spacingAround", () => {
-  const paragraph = { text: "제목", size: 10, bold: false, y: 60, bottom: 70, x: 72, width: 40, firstX: 72, restX: null, pitch: null };
+  const paragraph = { text: "제목", size: 10, bold: false, y: 60, bottom: 70, x: 72, width: 40, firstX: 72, restX: null, pitch: null, last: { text: "제목", width: 20 } };
   it("leaves the gap the page had before a table", () => {
     // Word's line ends 0.48 sizes below the baseline, at 74.8; the table starts at 78.8.
     const table = { y: 78.8, table: { y: 78.8, height: 20 } } as unknown as Parameters<typeof spacingAround>[2];
@@ -109,5 +109,31 @@ describe("toPptx", () => {
   it("uses the PDF page size", async () => {
     const files = await unzip(await toPptx([{ ...textPage, image: JPG }]));
     expect(strFromU8(files["ppt/presentation.xml"])).toContain('cx="9144000"');
+  });
+});
+
+describe("trackingOf", () => {
+  it("measures how much tighter than Malgun Gothic a Hangul line was set", () => {
+    // Eleven Hangul characters at 10pt take 110pt in Malgun Gothic; set 3% tighter they take 106.7pt.
+    expect(trackingOf({ text: "수확량감소환산고사결과", width: 106.7 }, 10)).toBeCloseTo(-0.03);
+  });
+
+  it("does not guess from short lines or lines that are mostly symbols and Latin", () => {
+    expect(trackingOf({ text: "보통약관", width: 30 }, 10)).toBeNull();
+    expect(trackingOf({ text: "max A (2.2~3.0m)", width: 60 }, 10)).toBeNull();
+  });
+});
+
+describe("cellPitch", () => {
+  const line = (y: number) => ({ text: "보통", x: 0, y, width: 20, size: 6.6, bold: false, runs: [] });
+  const item = { kind: "text" as const, y: 0, text: "보통약관", size: 6.6, bold: false, align: "center" as const, pitch: 10.5, edges: { first: line(10), last: line(20.5) } };
+
+  it("spreads a Hangul word processor's block of lines evenly, as Word gives every line a full pitch", () => {
+    // Two lines: one pitch plus one line of text.
+    expect(cellPitch(item, "words")).toBeCloseTo((10.5 + 6.6) / 2);
+  });
+
+  it("keeps the pitch of text that came from Word", () => {
+    expect(cellPitch(item, "anywhere")).toBe(10.5);
   });
 });
