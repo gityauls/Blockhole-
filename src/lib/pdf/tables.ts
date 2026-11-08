@@ -1,10 +1,21 @@
-import { type Line, type TextRun, type Wrap, groupLines, joinWrapped } from "./layout";
+import { type Line, START_MARK, type TextRun, type Wrap, groupLines, joinWrapped, pitchOf, wouldFit } from "./layout";
 import type { Fill, Segment } from "./shapes";
 
 export type Align = "left" | "center" | "right";
 export type VAlign = "top" | "center" | "bottom";
 
-export type CellParagraph = { kind: "text"; y: number; text: string; size: number; bold: boolean; align: Align };
+export type CellParagraph = {
+  kind: "text";
+  y: number;
+  text: string;
+  size: number;
+  bold: boolean;
+  align: Align;
+  /** Its first and last lines on the page, to tell whether a page break cut it. */
+  edges?: { first: Line; last: Line };
+  /** Distance between its baselines, when it has more than one line. */
+  pitch?: number | null;
+};
 export type CellTable = { kind: "table"; y: number; table: TableBlock };
 export type CellItem = CellParagraph | CellTable;
 
@@ -34,6 +45,15 @@ export type TableBlock = {
   cells: Cell[];
   /** Leading rows Word should repeat on every page, found when a table continues across pages. */
   headerRows?: number;
+  /** Space between a cell's left or right edge and its text, measured from the page. */
+  padding: number;
+  /** How the source program broke lines in the table's cells. */
+  wrap: Wrap;
+  /**
+   * Rows a page break cut in two and that were joined again. Their measured height spans both pages, so Word must
+   * size them by their content alone, or it cannot break them across pages as the source did.
+   */
+  joinedRows?: number[];
 };
 
 const TOLERANCE = 2;
@@ -45,7 +65,9 @@ const MAX_BOX_LINES = 15;
 const SHADE_COVER = 0.7;
 const PARAGRAPH_PITCH = 1.9;
 const SHORT_LABEL_LINES = 3;
-const START_MARK = /^\s*([•·▪■□○●◦※*\-–]|\(?\d{1,2}[.)]|[①-⑳]|[가-하][.)]|\([가-하]\))/;
+// Word's default left and right cell padding, used when a table holds no text to measure it from.
+const DEFAULT_PADDING = 5.4;
+const MAX_PADDING = 10;
 
 type Horizontal = { y: number; x1: number; x2: number };
 type Vertical = { x: number; y1: number; y2: number };
@@ -222,10 +244,17 @@ function alignOf(lines: Line[], cell: { x: number; width: number }): Align {
   return lines.every((line) => right - (line.x + line.width) <= TOLERANCE) ? "right" : "left";
 }
 
-function cellParagraphs(lines: Line[], cell: { x: number; width: number }, wrap: Wrap): CellParagraph[] {
+/** The cell padding is the smallest gap between a cell's left edge and any of its lines. */
+function paddingOf(cells: { x: number }[], cellLines: Line[][]): number {
+  const gaps = cells.flatMap((cell, c) => cellLines[c].map((line) => line.x - cell.x)).filter((gap) => gap >= 0);
+  return gaps.length ? Math.min(MAX_PADDING, Math.max(0.5, Math.min(...gaps))) : DEFAULT_PADDING;
+}
+
+
+function cellParagraphs(lines: Line[], cell: { x: number; width: number }, wrap: Wrap, padding: number): CellParagraph[] {
   if (lines.length === 0) return [];
   const fullRight = Math.max(...lines.map((line) => line.x + line.width));
-  const widest = Math.max(...lines.map((line) => line.width));
+  const room = cell.width - padding * 2;
   const paragraphs: { lines: Line[]; text: string }[] = [];
   let previous: Line | null = null;
   for (const line of lines) {
@@ -236,8 +265,8 @@ function cellParagraphs(lines: Line[], cell: { x: number; width: number }, wrap:
       START_MARK.test(line.text) ||
       line.y - previous.y > previous.size * PARAGRAPH_PITCH ||
       line.bold !== previous.bold ||
-      // A clearly short line ends its paragraph.
-      previous.width < widest - previous.size * 3;
+      // A line that ends before the cell was full ends its paragraph.
+      wouldFit(previous, line, room, wrap);
     if (startsNew) paragraphs.push({ lines: [line], text: line.text });
     else if (current && previous) {
       current.text += joinWrapped(previous, line, wrap, fullRight);
@@ -248,7 +277,16 @@ function cellParagraphs(lines: Line[], cell: { x: number; width: number }, wrap:
   return paragraphs.map((p) => {
     const first = p.lines[0];
     const size = p.lines.reduce((best, line) => (line.text.length > best.text.length ? line : best)).size;
-    return { kind: "text", y: first.y - first.size, text: p.text, size, bold: first.bold, align: alignOf(p.lines, cell) };
+    return {
+      kind: "text",
+      y: first.y - first.size,
+      text: p.text,
+      size,
+      bold: first.bold,
+      align: alignOf(p.lines, cell),
+      edges: { first, last: p.lines.at(-1)! },
+      pitch: pitchOf(p.lines),
+    };
   });
 }
 
@@ -300,13 +338,18 @@ export function findTables(
     if (!placed) rest.push(run);
   }
 
-  const blocks: (TableBlock & { parent?: { grid: number; cell: number } })[] = grids.map((grid, g) => ({
+  const blocks: (TableBlock & { parent?: { grid: number; cell: number } })[] = grids.map((grid, g) => {
+    const cellLines = grid.cells.map((_, c) => groupLines(cellRuns[g][c]));
+    const padding = paddingOf(grid.cells, cellLines);
+    return {
     ...grid.box,
+    padding,
+    wrap,
     columns: grid.xs.slice(1).map((x, i) => x - grid.xs[i]),
     rows: grid.ys.slice(1).map((y, i) => y - grid.ys[i]),
     cells: grid.cells.map((cell, c) => {
-      const lines = groupLines(cellRuns[g][c]);
-      const items: CellItem[] = cellParagraphs(lines, cell, wrap);
+      const lines = cellLines[c];
+      const items: CellItem[] = cellParagraphs(lines, cell, wrap, padding);
       const shade = fills.find(
         (fill) =>
           inside(cell.x + cell.width / 2, cell.y + cell.height / 2, fill) &&
@@ -314,7 +357,8 @@ export function findTables(
       )?.color;
       return { ...cell, items, vAlign: vAlignOf(items, lines, cell), ...(shade ? { shade } : {}) };
     }),
-  }));
+    };
+  });
 
   // Drop single boxes that frame a large part of the page; they are borders, not tables.
   const keep = blocks.map((block, g) => !(block.cells.length === 1 && groupLines(cellRuns[g][0]).length > MAX_BOX_LINES));
@@ -379,7 +423,7 @@ export function continueTable(previous: TableBlock, next: TableBlock): TableBloc
     ? previous.cells.map((cell) => {
         if (cell.row !== lastRow) return cell;
         const piece = next.cells.find((other) => other.row === header && other.col === cell.col);
-        return piece ? joinCells(cell, piece) : cell;
+        return piece ? joinCells(cell, piece, previous) : cell;
       })
     : previous.cells;
   const rows = [...previous.rows];
@@ -391,6 +435,7 @@ export function continueTable(previous: TableBlock, next: TableBlock): TableBloc
     height: previous.height + next.height,
     rows: [...rows, ...next.rows.slice(skip)],
     headerRows: Math.max(previous.headerRows ?? 0, header),
+    joinedRows: [...(previous.joinedRows ?? []), ...(split ? [lastRow] : [])],
     cells: [
       ...previousCells,
       ...next.cells.filter((cell) => cell.row >= skip).map((cell) => ({ ...cell, row: cell.row + offset })),
@@ -423,12 +468,15 @@ function rowContinues(previous: TableBlock, lastRow: number, next: TableBlock, r
 }
 
 /** Puts the two pieces of a cut cell back together, joining the sentence that the page break split. */
-function joinCells(top: Cell, bottom: Cell): Cell {
+function joinCells(top: Cell, bottom: Cell, table: TableBlock): Cell {
   const items = [...top.items];
   const rest = [...bottom.items];
   const last = items.at(-1);
   const first = rest[0];
-  if (last?.kind === "text" && first?.kind === "text" && !START_MARK.test(first.text)) {
+  // A line that ended before the cell was full, such as a two-line label, was broken on purpose, not by the page.
+  const cut = (above: CellParagraph, below: CellParagraph) =>
+    !above.edges || !below.edges || !wouldFit(above.edges.last, below.edges.first, top.width - table.padding * 2, table.wrap);
+  if (last?.kind === "text" && first?.kind === "text" && !START_MARK.test(first.text) && cut(last, first)) {
     const glue = /[A-Za-z0-9,]$/.test(last.text) ? " " : "";
     items[items.length - 1] = { ...last, text: last.text + glue + first.text, align: last.align === "center" && first.align !== "center" ? first.align : last.align };
     rest.shift();

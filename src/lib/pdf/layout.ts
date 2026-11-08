@@ -20,8 +20,28 @@ export type Line = {
   runs: TextRun[];
 };
 
-/** y is the top of the paragraph's first line; x and width span all its lines. */
-export type Paragraph = { text: string; size: number; bold: boolean; y: number; x: number; width: number };
+/**
+ * y is the top of the paragraph's first line and bottom the baseline of its last; x and width span all its lines.
+ * firstX is where the first line starts and restX where the later lines start, which give its indentation.
+ * pitch is the distance between its baselines, when it has more than one line.
+ */
+export type Paragraph = {
+  text: string;
+  size: number;
+  bold: boolean;
+  y: number;
+  bottom: number;
+  x: number;
+  width: number;
+  firstX: number;
+  restX: number | null;
+  pitch: number | null;
+};
+
+/** Distance between the baselines of consecutive lines, or null for a single line. */
+export function pitchOf(lines: Line[]): number | null {
+  return lines.length > 1 ? (lines.at(-1)!.y - lines[0].y) / (lines.length - 1) : null;
+}
 
 export type PageContent = {
   width: number;
@@ -48,6 +68,24 @@ const GUTTER_TOLERANCE = 0.02;
 const MIN_GUTTER = 8;
 const MIN_COLUMN_SHARE = 0.2;
 const BLOCK_WEIGHT = 3;
+// Slack for glyph widths when judging whether text would have fitted on a line, as a share of the font size.
+const FIT_SLACK = 0.5;
+
+/** A bullet, note mark, or item number that starts a new paragraph. */
+export const START_MARK = /^\s*([•·▪■□○●◦※*\-–]|\(?\d{1,2}[.)]|[①-⑳]|[가-하][.)]|\([가-하]\))/;
+
+/**
+ * Whether the start of `next` would have fitted at the end of `previous`, in `room` points from where `previous`
+ * starts. If it would, the source program did not wrap there: the writer broke the line on purpose. Word breaks
+ * Hangul anywhere, so only one character must fit; a program that breaks between words needs the whole first word
+ * to fit, and so does Latin text.
+ */
+export function wouldFit(previous: Line, next: Line, room: number, wrap: Wrap): boolean {
+  const word = /^[A-Za-z0-9]/.test(next.text) || wrap === "words" ? (next.text.match(/^\S+/)?.[0].length ?? 1) : 1;
+  const token = (next.width * word) / Math.max(1, next.text.length);
+  const space = wrap === "words" ? previous.size * 0.25 : 0;
+  return previous.width + space + token <= room - previous.size * FIT_SLACK;
+}
 
 const dominant = <T>(runs: TextRun[], value: (run: TextRun) => T): T => {
   const longest = runs.reduce((best, run) => (run.text.length > best.text.length ? run : best));
@@ -116,6 +154,7 @@ export function groupParagraphs(lines: Line[], wrap: Wrap = "words"): Paragraph[
   const paragraphs: Paragraph[] = [];
   const fullRight = Math.max(0, ...lines.map((line) => line.x + line.width));
   let previous: Line | null = null;
+  let lineCount = 0;
 
   for (const line of lines) {
     const current = paragraphs.at(-1);
@@ -125,12 +164,31 @@ export function groupParagraphs(lines: Line[], wrap: Wrap = "words"): Paragraph[
       !previous ||
       line.y - previous.y > line.size * PARAGRAPH_GAP ||
       sizeRatio > SIZE_CHANGE ||
-      line.bold !== previous.bold;
+      line.bold !== previous.bold ||
+      START_MARK.test(line.text) ||
+      // A line that ended before the column was full ends its paragraph.
+      wouldFit(previous, line, fullRight - previous.x, wrap);
 
     if (startsNew) {
-      paragraphs.push({ text: line.text, size: line.size, bold: line.bold, y: line.y - line.size, x: line.x, width: line.width });
+      paragraphs.push({
+        text: line.text,
+        size: line.size,
+        bold: line.bold,
+        y: line.y - line.size,
+        bottom: line.y,
+        x: line.x,
+        width: line.width,
+        firstX: line.x,
+        restX: null,
+        pitch: null,
+      });
+      lineCount = 1;
     } else if (current && previous) {
       current.text += joinWrapped(previous, line, wrap, fullRight);
+      lineCount++;
+      current.pitch = (line.y - (current.y + current.size)) / (lineCount - 1);
+      current.bottom = line.y;
+      current.restX = Math.min(current.restX ?? line.x, line.x);
       const right = Math.max(current.x + current.width, line.x + line.width);
       current.x = Math.min(current.x, line.x);
       current.width = right - current.x;

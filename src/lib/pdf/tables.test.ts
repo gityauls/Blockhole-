@@ -62,6 +62,22 @@ describe("findTables", () => {
     expect(texts(tables[0])).toEqual(["보통약관"]);
   });
 
+  it("keeps a line that ended with room to spare as its own paragraph", () => {
+    // "바람막이" would have fitted after "비가림", so the writer broke the line there.
+    const { tables } = findTables(
+      [run("비가림", 40, 32, 24), run("바람막이", 36, 44, 32)],
+      grid([10, 110], [20, 50]),
+      [],
+      "anywhere",
+    );
+    expect(texts(tables[0])).toEqual(["비가림/바람막이"]);
+  });
+
+  it("measures the cell padding from the text nearest the cell edge", () => {
+    const { tables } = findTables([run("품목", 15, 32), run("금액", 140, 32)], grid([10, 110, 210], [20, 40]), []);
+    expect(tables[0].padding).toBe(5);
+  });
+
   it("starts a new paragraph at a bullet", () => {
     const { tables } = findTables(
       [run("• 첫째 항목", 20, 32, 88), run("• 둘째 항목", 20, 44, 88)],
@@ -114,10 +130,11 @@ describe("findTables", () => {
 });
 
 describe("continueTable", () => {
-  const page = (rows: [string, string][], y0 = 20) => {
+  // Cells have 10pt padding, so the second column holds 170pt of text. A third value sets that text's width.
+  const page = (rows: ([string, string] | [string, string, number])[], y0 = 20) => {
     const ys = rows.map((_, i) => y0 + i * 20);
     ys.push(y0 + rows.length * 20);
-    const runs = rows.flatMap(([a, b], i) => [run(a, 20, y0 + i * 20 + 14), run(b, 120, y0 + i * 20 + 14)]);
+    const runs = rows.flatMap(([a, b, width], i) => [run(a, 20, y0 + i * 20 + 14), run(b, 120, y0 + i * 20 + 14, width)]);
     return findTables(runs, grid([10, 110, 300], ys), []).tables[0];
   };
 
@@ -131,11 +148,13 @@ describe("continueTable", () => {
   });
 
   it("puts back together a row the page break cut in two", () => {
-    const first = page([["구분", "기준"], ["트렐리스", "철선을 늘려 나무를 고"]]);
-    const second = page([["구분", "기준"], ["2,4,6선식", "정해 주는 방식이다."]]);
+    // The sentence fills its cell, so the page cut it; the label "트렐리스" had room for more, so it ended there.
+    const first = page([["구분", "기준"], ["트렐리스", "철선을 늘려 나무를 고", 168]]);
+    const second = page([["구분", "기준"], ["선식", "정해 주는 방식이다."]]);
     const joined = continueTable(first, second)!;
     expect(joined.rows).toHaveLength(2);
-    expect(texts(joined).slice(2)).toEqual(["트렐리스2,4,6선식", "철선을 늘려 나무를 고정해 주는 방식이다."]);
+    expect(joined.joinedRows).toEqual([1]);
+    expect(texts(joined).slice(2)).toEqual(["트렐리스/선식", "철선을 늘려 나무를 고정해 주는 방식이다."]);
   });
 
   it("refuses tables whose columns differ", () => {

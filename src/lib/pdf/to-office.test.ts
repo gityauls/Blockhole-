@@ -1,7 +1,7 @@
 import { strFromU8, unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import type { PageContent } from "./layout";
-import { toDocx, toPptx, toXlsx } from "./to-office";
+import { pageGeometry, spacingAround, toDocx, toPptx, toXlsx } from "./to-office";
 
 // 1x1 JPEG
 const JPG = Uint8Array.from(
@@ -49,6 +49,36 @@ describe("toDocx", () => {
   it("embeds pages that have no text as images", async () => {
     const files = await unzip(await toDocx([scanPage]));
     expect(Object.keys(files).some((name) => name.startsWith("word/media/"))).toBe(true);
+  });
+
+  it("sets Word's Korean layout defaults, breaking Hangul anywhere only for text from Word", async () => {
+    const styles = async (page: PageContent) => strFromU8((await unzip(await toDocx([page])))["word/styles.xml"]);
+    const fromWord = await styles({ ...textPage, wrap: "anywhere" });
+    expect(fromWord).toContain('w:eastAsia="ko-KR"');
+    expect(fromWord).toContain('<w:wordWrap w:val="0"/><w:autoSpaceDE w:val="0"/><w:autoSpaceDN w:val="0"/>');
+    expect(await styles({ ...textPage, wrap: "words" })).not.toContain("wordWrap");
+  });
+
+  it("uses the source page size and its margins", async () => {
+    const xml = strFromU8((await unzip(await toDocx([textPage])))["word/document.xml"]);
+    expect(xml).toContain('<w:pgSz w:w="14400" w:h="10800"');
+    // Left from the text, right no wider than the left, top so the first baseline lands where it was.
+    expect(xml).toMatch(/<w:pgMar w:top="1140" w:right="1440" w:bottom="1140" w:left="1440"/);
+  });
+});
+
+describe("pageGeometry", () => {
+  it("falls back to an A4 page when there is no text", () => {
+    expect(pageGeometry([scanPage]).width).toBeCloseTo(595.3);
+  });
+});
+
+describe("spacingAround", () => {
+  const paragraph = { text: "제목", size: 10, bold: false, y: 60, bottom: 70, x: 72, width: 40, firstX: 72, restX: null, pitch: null };
+  it("leaves the gap the page had before a table", () => {
+    // Word's line ends 0.48 sizes below the baseline, at 74.8; the table starts at 78.8.
+    const table = { y: 78.8, table: { y: 78.8, height: 20 } } as unknown as Parameters<typeof spacingAround>[2];
+    expect(spacingAround(paragraph, undefined, table)).toEqual({ before: 0, after: 80 });
   });
 });
 
