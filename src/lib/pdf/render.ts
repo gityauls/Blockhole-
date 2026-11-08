@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { type PageContent, type TextRun, textBoxes } from "./layout";
+import { type Shapes, readShapes } from "./shapes";
 
 type PdfJs = typeof import("pdfjs-dist");
 type OpenPdf = { pdfjs: PdfJs; doc: PDFDocumentProxy; close: () => Promise<void> };
@@ -66,10 +67,16 @@ function isBoldFont(page: PDFPageProxy, id: string): boolean {
   }
 }
 
-async function readRuns(pdfjs: PdfJs, page: PDFPageProxy): Promise<TextRun[]> {
+async function readRuns(pdfjs: PdfJs, page: PDFPageProxy): Promise<{ runs: TextRun[]; shapes: Shapes }> {
   const viewport = page.getViewport({ scale: 1 });
   // Font details such as bold are only available after the page has been parsed.
-  await page.getOperatorList();
+  const ops = await page.getOperatorList();
+  const shapes = readShapes(
+    ops.fnArray,
+    ops.argsArray,
+    pdfjs.OPS as unknown as Record<string, number>,
+    viewport.transform as [number, number, number, number, number, number],
+  );
   const { items } = await page.getTextContent();
 
   const runs: TextRun[] = [];
@@ -85,7 +92,7 @@ async function readRuns(pdfjs: PdfJs, page: PDFPageProxy): Promise<TextRun[]> {
       bold: isBoldFont(page, item.fontName),
     });
   }
-  return runs;
+  return { runs, shapes };
 }
 
 /** Finds each line's color by comparing the page drawn with and without its text. */
@@ -131,13 +138,16 @@ export async function readPages(
   const { pdfjs, doc, close } = await openPdf(bytes);
   const pages: PageContent[] = [];
   try {
+    const { info } = (await doc.getMetadata().catch(() => ({ info: {} }))) as { info: Record<string, unknown> };
+    // Word may break Korean lines inside a word; Hangul and most other programs break between words.
+    const wrap = /Microsoft.*Word/i.test(`${info.Producer ?? ""} ${info.Creator ?? ""}`) ? "anywhere" : "words";
     for (let number = 1; number <= doc.numPages; number++) {
       onPage?.(number, doc.numPages);
       const page = await doc.getPage(number);
       const { width, height } = page.getViewport({ scale: 1 });
-      const runs = await readRuns(pdfjs, page);
+      const { runs, shapes } = await readRuns(pdfjs, page);
       const hasText = runs.some((run) => run.text.trim());
-      const content: PageContent = { width, height, runs, colors: [] };
+      const content: PageContent = { width, height, runs, colors: [], shapes, wrap };
 
       if (use === "pptx") {
         const clean = await renderPage(page, hasText);

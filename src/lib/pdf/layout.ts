@@ -1,3 +1,5 @@
+import type { Shapes } from "./shapes";
+
 /** One piece of text from a PDF page, measured in points from the top left. */
 export type TextRun = {
   text: string;
@@ -18,7 +20,8 @@ export type Line = {
   runs: TextRun[];
 };
 
-export type Paragraph = { text: string; size: number; bold: boolean };
+/** y is the top of the paragraph's first line; x and width span all its lines. */
+export type Paragraph = { text: string; size: number; bold: boolean; y: number; x: number; width: number };
 
 export type PageContent = {
   width: number;
@@ -27,7 +30,13 @@ export type PageContent = {
   /** Hex text colors keyed by line index, sampled from the rendered page. */
   colors: string[];
   image?: Uint8Array;
+  /** Straight lines and filled boxes the page draws, used to find tables. */
+  shapes?: Shapes;
+  /** How the source program broke lines: Word may break inside Korean words, Hangul and most others only between them. */
+  wrap?: Wrap;
 };
+
+export type Wrap = "anywhere" | "words";
 
 const SPACE_GAP = 0.15;
 const CELL_GAP = 1.5;
@@ -38,6 +47,7 @@ const GUTTER_SEARCH = 0.3;
 const GUTTER_TOLERANCE = 0.02;
 const MIN_GUTTER = 8;
 const MIN_COLUMN_SHARE = 0.2;
+const BLOCK_WEIGHT = 3;
 
 const dominant = <T>(runs: TextRun[], value: (run: TextRun) => T): T => {
   const longest = runs.reduce((best, run) => (run.text.length > best.text.length ? run : best));
@@ -85,8 +95,26 @@ export function groupLines(runs: TextRun[]): Line[] {
   return groups.map(toLine);
 }
 
-export function groupParagraphs(lines: Line[]): Paragraph[] {
+/**
+ * Joins a wrapped line to the one before it. The PDF keeps no space at a line break, so whether one was there
+ * depends on how the source program wraps: between words, a space was there; anywhere, only if the line
+ * ended clearly short of the margin (the next word did not fit).
+ */
+export function joinWrapped(previous: Line, next: Line, wrap: Wrap, fullRight: number): string {
+  const lastRun = previous.runs.at(-1)?.text ?? "";
+  const firstRun = next.runs[0]?.text ?? "";
+  const room = fullRight - (previous.x + previous.width);
+  const spaced =
+    /\s$/.test(lastRun) ||
+    /^\s/.test(firstRun) ||
+    (/[A-Za-z0-9]$/.test(previous.text) && /^[A-Za-z0-9]/.test(next.text)) ||
+    (wrap === "words" ? !/[-‐]$/.test(previous.text) : room > previous.size * 0.9);
+  return `${spaced ? " " : ""}${next.text}`;
+}
+
+export function groupParagraphs(lines: Line[], wrap: Wrap = "words"): Paragraph[] {
   const paragraphs: Paragraph[] = [];
+  const fullRight = Math.max(0, ...lines.map((line) => line.x + line.width));
   let previous: Line | null = null;
 
   for (const line of lines) {
@@ -99,8 +127,14 @@ export function groupParagraphs(lines: Line[]): Paragraph[] {
       sizeRatio > SIZE_CHANGE ||
       line.bold !== previous.bold;
 
-    if (startsNew) paragraphs.push({ text: line.text, size: line.size, bold: line.bold });
-    else if (current) current.text += ` ${line.text}`;
+    if (startsNew) {
+      paragraphs.push({ text: line.text, size: line.size, bold: line.bold, y: line.y - line.size, x: line.x, width: line.width });
+    } else if (current && previous) {
+      current.text += joinWrapped(previous, line, wrap, fullRight);
+      const right = Math.max(current.x + current.width, line.x + line.width);
+      current.x = Math.min(current.x, line.x);
+      current.width = right - current.x;
+    }
     previous = line;
   }
 
@@ -131,18 +165,32 @@ export function textBoxes(runs: TextRun[]): Line[] {
  * Finds a vertical gutter so side-by-side columns or book pages can be read one at a time.
  * Requires text on both sides and allows a few pieces, such as a heading, to cross it.
  */
-export function splitColumns(runs: TextRun[], pageWidth: number): TextRun[][] {
+export function splitColumns(runs: TextRun[], pageWidth: number, blocks: Box[] = []): TextRun[][] {
+  const gutter = findGutter(runs, pageWidth, blocks);
+  if (gutter === null) return [runs];
+  const middle = (run: TextRun) => run.x + run.width / 2;
+  return [runs.filter((run) => middle(run) < gutter), runs.filter((run) => middle(run) >= gutter)];
+}
+
+export type Box = { x: number; y: number; width: number; height: number };
+
+/**
+ * Returns the x of the gutter between two columns, or null for a single column.
+ * Blocks such as tables count as occupied space, so a gap inside a table is never taken for a gutter.
+ */
+export function findGutter(runs: TextRun[], pageWidth: number, blocks: Box[] = []): number | null {
   const text = runs.filter((run) => run.text.trim());
-  if (text.length === 0) return [runs];
+  if (text.length === 0) return null;
 
   const width = Math.ceil(pageWidth);
   const crossing = new Array<number>(width + 1).fill(0);
-  for (const run of text) {
-    const last = Math.min(width, Math.floor(run.x + run.width));
-    for (let x = Math.max(0, Math.floor(run.x)); x <= last; x++) crossing[x]++;
+  const spans = [...text, ...blocks];
+  for (const span of spans) {
+    const last = Math.min(width, Math.floor(span.x + span.width));
+    for (let x = Math.max(0, Math.floor(span.x)); x <= last; x++) crossing[x]++;
   }
 
-  const allowed = Math.floor(text.length * GUTTER_TOLERANCE);
+  const allowed = Math.floor(spans.length * GUTTER_TOLERANCE);
   const from = Math.floor(width * GUTTER_SEARCH);
   const to = Math.ceil(width * (1 - GUTTER_SEARCH));
 
@@ -156,17 +204,19 @@ export function splitColumns(runs: TextRun[], pageWidth: number): TextRun[][] {
       start = -1;
     }
   }
-  if (best.length < MIN_GUTTER) return [runs];
+  if (best.length < MIN_GUTTER) return null;
 
   const gutter = best.start + best.length / 2;
-  const middle = (run: TextRun) => run.x + run.width / 2;
-  const left = runs.filter((run) => middle(run) < gutter);
-  const right = runs.filter((run) => middle(run) >= gutter);
-
-  // A page of short lines also leaves the middle empty, so the right side must hold real text.
-  const lines = (side: TextRun[]) => groupLines(side).length;
-  const enough = Math.max(2, lines(runs) * MIN_COLUMN_SHARE);
-  return lines(left) >= enough && lines(right) >= enough ? [left, right] : [runs];
+  const middle = (span: { x: number; width: number }) => span.x + span.width / 2;
+  // A page of short lines also leaves the middle empty, so both sides must hold real content.
+  // A table counts like several lines of text.
+  const weight = (side: (span: { x: number; width: number }) => boolean) =>
+    groupLines(text.filter(side)).length + blocks.filter(side).length * BLOCK_WEIGHT;
+  const total = weight(() => true);
+  const enough = Math.max(2, total * MIN_COLUMN_SHARE);
+  const left = weight((span) => middle(span) < gutter);
+  const right = weight((span) => middle(span) >= gutter);
+  return left >= enough && right >= enough ? gutter : null;
 }
 
 /** Lines text up into a grid using the left edge of each block of text. */

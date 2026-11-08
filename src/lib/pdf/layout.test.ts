@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   type TextRun,
   cellValue,
+  findGutter,
+  joinWrapped,
   groupLines,
   groupParagraphs,
   splitColumns,
@@ -146,5 +148,38 @@ describe("cellValue", () => {
     expect(cellValue("007")).toBe("007");
     expect(cellValue("2023년")).toBe("2023년");
     expect(cellValue("1,2,3")).toBe("1,2,3");
+  });
+});
+
+describe("findGutter", () => {
+  it("never puts a gutter inside a table", () => {
+    // A wide table with an empty strip down the middle, and one caption line.
+    const runs = [run("표 제목", 300, 20, 120)];
+    expect(findGutter(runs, 760, [{ x: 40, y: 40, width: 680, height: 400 }])).toBeNull();
+  });
+
+  it("still finds the gutter between two pages that hold tables", () => {
+    const left = Array.from({ length: 6 }, (_, i) => run(`왼${i}`, 40, 40 + i * 20, 280));
+    const right = Array.from({ length: 6 }, (_, i) => run(`오${i}`, 420, 40 + i * 20, 280));
+    const gutter = findGutter([...left, ...right], 760, [{ x: 40, y: 200, width: 280, height: 100 }]);
+    expect(gutter).toBeGreaterThan(320);
+    expect(gutter).toBeLessThan(420);
+  });
+});
+
+describe("joinWrapped", () => {
+  const [first] = groupLines([run("내구성 및", 10, 20, 50)]);
+  const [second] = groupLines([run("내재해성", 10, 34, 40)]);
+
+  it("adds the space a word-wrapping program dropped at the line break", () => {
+    expect(joinWrapped(first, second, "words", 60)).toBe(" 내재해성");
+  });
+
+  it("adds no space after a break inside a word", () => {
+    expect(joinWrapped(first, second, "anywhere", 60)).toBe("내재해성");
+  });
+
+  it("adds a space when the line ended well short of the margin", () => {
+    expect(joinWrapped(first, second, "anywhere", 100)).toBe(" 내재해성");
   });
 });
