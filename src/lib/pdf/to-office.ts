@@ -1,4 +1,6 @@
 import {
+  type Leader,
+  type Line,
   type PageContent,
   type Wrap,
   type Paragraph,
@@ -143,14 +145,20 @@ function typesetting(paragraphs: { size: number; pitch?: number | null; last?: {
 const BLANK_LINE_SHARE = 0.65;
 
 /**
- * How many blank lines the writer left before `item` in a cell: the gap beyond where Word would put it anyway,
- * in whole lines. Word puts text right under a table, a table right under text's last line, and text one pitch
- * under the line before.
+ * The gap the writer left before `item` in a cell, beyond where Word would put it anyway: whole blank lines, and
+ * the rest in points as space before the item. Word puts text right under a table, a table right under text's
+ * last line, and text one pitch under the line before.
  */
-export function blankLinesBefore(previous: CellItem, item: CellItem, ratio: number): number {
+export function gapBefore(
+  previous: CellItem,
+  item: CellItem,
+  ratio: number,
+  /** The line spacing Word will give `item`, when it is text: the gap is what that spacing leaves over. */
+  advance?: number,
+): { blanks: number; before: number } {
   const text = item.kind === "text" ? item : previous.kind === "text" ? previous : null;
-  if (!text) return 0;
-  const pitch = text.pitch ?? ratio * text.size;
+  if (!text) return { blanks: 0, before: 0 };
+  const pitch = (item.kind === "text" ? advance : undefined) ?? text.pitch ?? ratio * text.size;
   const bottom = previous.kind === "table" ? previous.table.y + previous.table.height + AFTER_TABLE : null;
   let extra: number;
   if (item.kind === "text" && item.edges) {
@@ -168,18 +176,22 @@ export function blankLinesBefore(previous: CellItem, item: CellItem, ratio: numb
         : previous.kind === "text" && previous.edges
           ? item.table.y - BEFORE_TABLE - (previous.edges.last.y + LINE_DESCENT * previous.size)
           : 0;
-  } else return 0;
-  return Math.max(0, Math.floor(extra / pitch + (1 - BLANK_LINE_SHARE)));
+  } else return { blanks: 0, before: 0 };
+  const blanks = Math.max(0, Math.floor(extra / pitch + (1 - BLANK_LINE_SHARE)));
+  // A remainder within the line height's own tolerance is measuring noise, not space the writer left.
+  const rest = extra - blanks * pitch;
+  return { blanks, before: rest > pitch * LEADING_TOLERANCE ? rest : 0 };
 }
 
 /**
  * The line pitch for a cell paragraph in Word. Hangul word processors put line spacing between lines only, so a
  * block of n lines is (n - 1) pitches plus one line, while Word gives every line, the last too, a full pitch.
  * For text from such a program, spreading the block over n lines keeps rows as tall as they were. Text from Word
- * (which breaks lines anywhere) already follows Word's rule.
+ * (which breaks lines anywhere) already follows Word's rule. The extra line comes once per cell, so only the cell's
+ * first paragraph of several lines (`spread`) takes it up; the others keep the source's pitch.
  */
-export function cellPitch(item: CellParagraph, wrap: Wrap): number | null | undefined {
-  if (wrap === "anywhere" || !item.pitch || !item.edges) return item.pitch;
+export function cellPitch(item: CellParagraph, wrap: Wrap, spread = true): number | null | undefined {
+  if (wrap === "anywhere" || !item.pitch || !item.edges || !spread) return item.pitch;
   const lines = Math.round((item.edges.last.y - item.edges.first.y) / item.pitch) + 1;
   return lines > 1 ? ((lines - 1) * item.pitch + item.size) / lines : item.pitch;
 }
@@ -198,6 +210,26 @@ const MIME = {
 
 type Docx = typeof import("docx");
 type DocxChild = InstanceType<Docx["Paragraph"]> | InstanceType<Docx["Table"]>;
+type RunOptions = { bold?: boolean; size: number; font: string; characterSpacing?: number };
+
+/** Text runs for a paragraph, with Word tabs where the text has a tab (a dot leader to a page number). */
+function textRuns(d: Docx, text: string, options: RunOptions): InstanceType<Docx["TextRun"]>[] {
+  return text.split("\t").flatMap((part, i) => [
+    // Letter spacing would squeeze or spread the leader's dots too.
+    ...(i ? [new d.TextRun({ ...options, characterSpacing: undefined, children: [new d.Tab()] })] : []),
+    ...(part ? [new d.TextRun({ ...options, text: part })] : []),
+  ]);
+}
+
+/** A right-aligned tab stop with the leader, `position` twips from the paragraph's left margin. */
+function leaderStop(d: Docx, tab: Leader | undefined, position: number) {
+  if (!tab) return undefined;
+  const leader = { dot: d.LeaderType.DOT, middleDot: d.LeaderType.MIDDLE_DOT, hyphen: d.LeaderType.HYPHEN, underscore: d.LeaderType.UNDERSCORE }[tab.leader];
+  return [{ type: d.TabStopType.RIGHT, position: Math.max(0, Math.round(position)), leader }];
+}
+
+/** The part of a line to measure letter spacing from: the text before a leader, whose dots are stretched. */
+const spacingSample = (line?: Line) => (line?.tab ? line.tab.before : line);
 
 /** indent is how far the table sits right of its column's edge, in points. */
 function tableToDocx(
@@ -217,10 +249,12 @@ function tableToDocx(
   const cellToDocx = (cell: Cell) => {
     const width = twips(block.columns.slice(cell.col, cell.col + cell.colSpan).reduce((a, b) => a + b, 0));
     // A line that fitted in the source cell must fit here too, so a narrow cell gives up padding for its widest line.
-    const widest = Math.max(
-      0,
-      ...cell.items.flatMap((item) => (item.kind === "text" && item.edges ? [item.edges.first.width, item.edges.last.width] : [])),
-    );
+    // Measured from where the text starts furthest left, since indented lines must fit with their indent.
+    const edges = cell.items.flatMap((item) => (item.kind === "text" && item.edges ? [item.edges.first, item.edges.last] : []));
+    const textLeft = edges.length ? Math.min(...edges.map((line) => line.x)) : cell.x;
+    const widest = edges.length
+      ? Math.max(...edges.map((line) => line.x + line.width)) - Math.min(...edges.map((line) => line.x))
+      : 0;
     const cellPadding = Math.max(0, Math.min(padding, Math.floor((width - twips(widest)) / 2)));
     const blank = (size: number, pitch: number | null | undefined) =>
       new d.Paragraph({
@@ -229,28 +263,44 @@ function tableToDocx(
         run: { size: Math.round(size * 2), font: DOCUMENT_FONT },
         children: [],
       });
+    // The cell's first paragraph of several lines takes up Word's extra line (see cellPitch).
+    const spreadAt = cell.items.findIndex((item) => item.kind === "text" && !!item.pitch);
+    const pitchOf = (item: CellParagraph) => cellPitch(item, block.wrap, cell.items.indexOf(item) === spreadAt);
     const children: DocxChild[] = cell.items.flatMap((item, index) => {
       const previous = cell.items[index - 1];
-      const blanks = previous ? blankLinesBefore(previous, item, set.ratio) : 0;
+      const lead = item.kind === "text" ? set.leading(item.size, pitchOf(item)) : undefined;
+      const advance = item.kind === "text" ? (lead ? lead.line / TWIPS_PER_POINT : NATURAL_LINE * item.size) : undefined;
+      const { blanks, before } = previous ? gapBefore(previous, item, set.ratio, advance) : { blanks: 0, before: 0 };
       const sized = item.kind === "text" ? item : previous?.kind === "text" ? previous : null;
       const lines = Array.from({ length: blanks }, () => blank(sized?.size ?? 10, sized?.pitch));
-      return [...lines, cellItemToDocx(item)];
+      return [...lines, cellItemToDocx(item, before)];
     });
-    function cellItemToDocx(item: CellItem): DocxChild {
+    // before is the space the source left above the item beyond Word's own line spacing, in points.
+    function cellItemToDocx(item: CellItem, before = 0): DocxChild {
       return item.kind === "table"
         ? tableToDocx(d, item.table, width - padding * 2, false, set)
         : new d.Paragraph({
             alignment: item.align,
-            spacing: { before: 0, after: 0, ...set.leading(item.size, cellPitch(item, block.wrap)) },
-            children: [
-              new d.TextRun({
-                text: item.text,
-                bold: item.bold,
-                size: Math.round(item.size * 2),
-                font: DOCUMENT_FONT,
-                characterSpacing: set.tracking(item.size, item.edges?.last),
-              }),
-            ],
+            // Indents from where the lines start, measured from the cell's leftmost line: the structure between
+            // lines ("① …", "- …" under it), not the slack a narrow cell needs for Word's wider glyphs.
+            indent:
+              item.align === "left" && item.edges
+                ? indentOf(
+                    {
+                      firstX: item.edges.first.x,
+                      restX: item.edges.last !== item.edges.first ? item.edges.last.x : null,
+                    } as Paragraph,
+                    textLeft,
+                  )
+                : undefined,
+            spacing: { before: before > 0 ? twips(before) : 0, after: 0, ...set.leading(item.size, pitchOf(item)) },
+            tabStops: leaderStop(d, item.edges?.last.tab, twips((item.edges?.last.tab?.right ?? 0) - cell.x) - cellPadding),
+            children: textRuns(d, item.text, {
+              bold: item.bold,
+              size: Math.round(item.size * 2),
+              font: DOCUMENT_FONT,
+              characterSpacing: set.tracking(item.size, spacingSample(item.edges?.last)),
+            }),
           });
     }
     // Word requires every cell to end with a paragraph.
@@ -319,7 +369,7 @@ type PageFlow = { items: FlowItem[]; columns: Column[] };
 /** Orders a page's paragraphs and tables for reading, column by column and top to bottom, and measures the columns. */
 function pageFlow(page: PageContent): PageFlow {
   const { tables, rest } = page.shapes
-    ? findTables(page.runs, page.shapes.lines, page.shapes.fills, page.wrap)
+    ? findTables(page.runs, page.shapes.lines, page.shapes.fills, page.wrap, page)
     : { tables: [], rest: page.runs };
   const gutter = findGutter(rest, page.width, tables);
   const regions = gutter === null ? [[0, page.width]] : [[0, gutter], [gutter, page.width]];
@@ -610,10 +660,14 @@ export async function toDocx(source: PageContent[]): Promise<Blob> {
               ...spacingAround(paragraph, neighbor(items[position - 1]), neighbor(items[position + 1])),
               ...body.leading(paragraph.size, paragraph.pitch),
             },
+            tabStops: leaderStop(
+              d,
+              paragraph.tab,
+              Math.min(width, ((paragraph.tab?.right ?? 0) - item.left) * TWIPS_PER_POINT),
+            ),
             children: [
               ...(columnBreak ? [new d.ColumnBreak()] : []),
-              new d.TextRun({
-                text: paragraph.text,
+              ...textRuns(d, paragraph.text, {
                 bold: paragraph.bold,
                 size: Math.round(paragraph.size * 2),
                 font: DOCUMENT_FONT,

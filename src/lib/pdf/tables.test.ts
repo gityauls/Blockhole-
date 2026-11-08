@@ -121,9 +121,16 @@ describe("findTables", () => {
     expect(findTables([run("밑줄", 20, 30)], [h(32, 20, 60)], []).tables).toHaveLength(0);
   });
 
-  it("leaves a frame around most of the page as plain text", () => {
+  it("keeps a long box around part of the page as a one-cell table", () => {
     const body = Array.from({ length: 20 }, (_, i) => run(`줄${i}`, 20, 40 + i * 14));
-    const { tables, rest } = findTables(body, grid([10, 500], [20, 340]), []);
+    const { tables } = findTables([run("< 목 차 >", 200, 12), ...body], grid([10, 300], [20, 340]), [], "words", { width: 595, height: 842 });
+    expect(tables).toHaveLength(1);
+    expect(tables[0].cells[0].items.length).toBeGreaterThan(0);
+  });
+
+  it("leaves a frame around everything on the page as plain text", () => {
+    const body = Array.from({ length: 20 }, (_, i) => run(`줄${i}`, 20, 40 + i * 14));
+    const { tables, rest } = findTables(body, grid([10, 500], [20, 340]), [], "words", { width: 510, height: 360 });
     expect(tables).toHaveLength(0);
     expect(rest).toHaveLength(20);
   });

@@ -36,7 +36,7 @@ const BAND = 8;
 function hasMiddleBand(page: PageContent): boolean {
   if (page.width >= page.height) return false;
   const middle = page.height / 2;
-  const tables = page.shapes ? findTables(page.runs, page.shapes.lines, page.shapes.fills, page.wrap).tables : [];
+  const tables = page.shapes ? findTables(page.runs, page.shapes.lines, page.shapes.fills, page.wrap, page).tables : [];
   const spans = [
     ...page.runs.filter((run) => run.text.trim()).map((run) => [run.y - run.size, run.y]),
     ...tables.map((table) => [table.y, table.y + table.height]),
@@ -49,7 +49,7 @@ function hasMiddleBand(page: PageContent): boolean {
 
 function hasMiddleGutter(page: PageContent): boolean {
   if (page.width <= page.height) return false;
-  const tables = page.shapes ? findTables(page.runs, page.shapes.lines, page.shapes.fills, page.wrap).tables : [];
+  const tables = page.shapes ? findTables(page.runs, page.shapes.lines, page.shapes.fills, page.wrap, page).tables : [];
   const gutter = findGutter(
     page.runs.filter((run) => !tables.some((t) => run.x >= t.x && run.x <= t.x + t.width && run.y >= t.y && run.y <= t.y + t.height)),
     page.width,

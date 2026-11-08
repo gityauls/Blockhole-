@@ -23,7 +23,21 @@ export type Line = {
   size: number;
   bold: boolean;
   runs: TextRun[];
+  /** A dot leader to a right-aligned number, as in a table of contents: the text has a tab where it was. */
+  tab?: Leader;
 };
+
+export type Leader = {
+  /** Where the text after the leader ends, which is where a right-aligned tab stop puts it. */
+  right: number;
+  leader: "dot" | "middleDot" | "hyphen" | "underscore";
+  /** The text before the leader and its width, set at natural spacing. */
+  before: { text: string; width: number };
+};
+
+// Four or more leader characters after text, then nothing or a short page reference: dots drawn by a tab leader.
+const LEADER = /^(.*?\S)\s*([·.‥…ㆍ・\-_]{4,})\s*(\S{1,12})?$/;
+const LEADER_KIND: Record<string, Leader["leader"]> = { ".": "dot", "‥": "dot", "…": "dot", "-": "hyphen", _: "underscore" };
 
 /**
  * y is the top of the paragraph's first line and bottom the baseline of its last; x and width span all its lines.
@@ -43,6 +57,8 @@ export type Paragraph = {
   pitch: number | null;
   /** Its last line, which is set at natural width even in justified text, to measure letter spacing from. */
   last: { text: string; width: number };
+  /** The leader of its last line, if it has one. */
+  tab?: Leader;
 };
 
 /** Distance between the baselines of consecutive lines, or null for a single line. */
@@ -106,17 +122,41 @@ function toLine(runs: TextRun[]): Line {
   const sorted = [...runs].sort((a, b) => a.x - b.x);
   let text = "";
   let end = sorted[0].x;
+  // Where each run starts in the text, to find the x of any character.
+  const starts: { index: number; run: TextRun; length: number }[] = [];
 
   for (const run of sorted) {
     const gap = run.x - end;
     if (text && gap > run.size * SPACE_GAP && !text.endsWith(" ")) text += " ";
-    text += text ? run.text.replace(/^\s+/, "") : run.text.trimStart();
+    const piece = text ? run.text.replace(/^\s+/, "") : run.text.trimStart();
+    starts.push({ index: text.length, run, length: piece.length });
+    text += piece;
     end = run.x + run.width;
   }
+  text = text.trimEnd();
 
   const right = Math.max(...sorted.map((run) => run.x + run.width));
+  const xAt = (index: number) => {
+    const at = starts.findLast((s) => s.index <= index) ?? starts[0];
+    return at.run.x + (at.run.width * (index - at.index)) / Math.max(1, at.length);
+  };
+  let tab: Leader | undefined;
+  const leader = text.match(LEADER);
+  if (leader) {
+    const dotsAt = text.indexOf(leader[2], leader[1].length);
+    // The text's own width is known only when the dots start a run of their own; inside a run they are stretched
+    // along with it, and the text then says nothing about its spacing.
+    const ownRun = starts.some((s) => s.index === dotsAt || (s.index === dotsAt + 1 && text[dotsAt] === " "));
+    tab = {
+      right,
+      leader: LEADER_KIND[leader[2][0]] ?? "middleDot",
+      before: ownRun ? { text: leader[1], width: xAt(dotsAt) - sorted[0].x } : { text: "", width: 0 },
+    };
+    text = `${leader[1]}\t${leader[3] ?? ""}`;
+  }
   return {
-    text: text.trimEnd(),
+    tab,
+    text,
     x: sorted[0].x,
     y: sorted[0].y,
     width: right - sorted[0].x,
@@ -194,6 +234,8 @@ export function groupParagraphs(lines: Line[], wrap: Wrap = "words"): Paragraph[
       sizeRatio > SIZE_CHANGE ||
       line.bold !== previous.bold ||
       START_MARK.test(line.text) ||
+      // A line that leads to a page number ends its entry.
+      previous.tab !== undefined ||
       // A line that ended before the column was full ends its paragraph.
       wouldFit(previous, line, fullRight - previous.x, wrap);
 
@@ -209,7 +251,8 @@ export function groupParagraphs(lines: Line[], wrap: Wrap = "words"): Paragraph[
         firstX: line.x,
         restX: null,
         pitch: null,
-        last: { text: line.text, width: line.width },
+        last: line.tab?.before ?? { text: line.text, width: line.width },
+        tab: line.tab,
       });
       lineCount = 1;
     } else if (current && previous) {
@@ -218,7 +261,8 @@ export function groupParagraphs(lines: Line[], wrap: Wrap = "words"): Paragraph[
       current.pitch = (line.y - (current.y + current.size)) / (lineCount - 1);
       current.bottom = line.y;
       current.restX = Math.min(current.restX ?? line.x, line.x);
-      current.last = { text: line.text, width: line.width };
+      current.last = line.tab?.before ?? { text: line.text, width: line.width };
+      current.tab = line.tab;
       const right = Math.max(current.x + current.width, line.x + line.width);
       current.x = Math.min(current.x, line.x);
       current.width = right - current.x;

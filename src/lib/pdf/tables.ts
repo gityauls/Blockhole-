@@ -61,9 +61,12 @@ const MIN_TRACK = 4;
 const MIN_LINE = 4;
 const MIN_TABLE_WIDTH = 20;
 const MIN_TABLE_HEIGHT = 8;
-const MAX_BOX_LINES = 15;
+// A single box this large in both directions, holding everything on the page, is a page border, not a table.
+const PAGE_BORDER_SHARE = 0.75;
 const SHADE_COVER = 0.7;
 const PARAGRAPH_PITCH = 1.9;
+// A gap this much wider than the cell's usual line pitch starts a new paragraph.
+const USUAL_PITCH_SLACK = 1.15;
 const SHORT_LABEL_LINES = 3;
 // Word's default left and right cell padding, used when a table holds no text to measure it from.
 const DEFAULT_PADDING = 5.4;
@@ -251,12 +254,28 @@ function paddingOf(cells: { x: number }[], cellLines: Line[][]): number {
 }
 
 
+/**
+ * How much room a line in a cell had, from where it starts: the rest of the cell for left-aligned or indented
+ * text, the whole inner width for centered text (which starts wherever its width puts it).
+ */
+function roomIn(line: Line, innerLeft: number, innerRight: number): number {
+  const left = line.x - innerLeft;
+  const right = innerRight - (line.x + line.width);
+  const centered = left > CENTER_GAP && Math.abs(left - right) <= CENTER_GAP;
+  return centered ? innerRight - innerLeft : innerRight - line.x;
+}
+// Gaps this close on both sides of a line mean it was centered.
+const CENTER_GAP = 2;
+
 function cellParagraphs(lines: Line[], cell: { x: number; width: number }, wrap: Wrap, padding: number): CellParagraph[] {
   if (lines.length === 0) return [];
   // The inner right edge of the cell, where the source program had to wrap.
   const innerRight = cell.x + cell.width - padding;
-  const room = cell.width - padding * 2;
   const paragraphs: { lines: Line[]; text: string }[] = [];
+  // The cell's usual distance between lines: wide line spacing (한글's 160-190%) is not a paragraph gap when every
+  // line of the cell has it.
+  const gaps = lines.slice(1).map((line, i) => line.y - lines[i].y).filter((gap) => gap > 0).sort((a, b) => a - b);
+  const usual = gaps.length >= 2 ? gaps[gaps.length >> 1] : 0;
   let previous: Line | null = null;
   for (const line of lines) {
     const current = paragraphs.at(-1);
@@ -264,10 +283,11 @@ function cellParagraphs(lines: Line[], cell: { x: number; width: number }, wrap:
       !current ||
       !previous ||
       START_MARK.test(line.text) ||
-      line.y - previous.y > previous.size * PARAGRAPH_PITCH ||
+      line.y - previous.y > Math.max(previous.size * PARAGRAPH_PITCH, usual * USUAL_PITCH_SLACK) ||
       line.bold !== previous.bold ||
       // A line that ends before the cell was full ends its paragraph.
-      wouldFit(previous, line, room, wrap);
+      // Measured from where the line starts, so an indented line has less room.
+      wouldFit(previous, line, roomIn(previous, cell.x + padding, innerRight), wrap);
     if (startsNew) paragraphs.push({ lines: [line], text: line.text });
     else if (current && previous) {
       current.text += joinWrapped(previous, line, wrap, innerRight - (previous.x + previous.width));
@@ -295,7 +315,9 @@ function vAlignOf(items: CellItem[], lines: Line[], cell: { y: number; height: n
   if (lines.length === 0 || items.some((item) => item.kind === "table")) return "top";
   const top = Math.min(...lines.map((line) => line.y - line.size)) - cell.y;
   const bottom = cell.y + cell.height - Math.max(...lines.map((line) => line.y + line.size * 0.25));
-  if (Math.abs(top - bottom) <= Math.max(2.5, cell.height * 0.15)) return "center";
+  // Centered text has even gaps; a tall box only allows a line's worth of difference, not a share of its height.
+  const size = Math.max(...lines.map((line) => line.size));
+  if (Math.abs(top - bottom) <= Math.max(2.5, Math.min(cell.height * 0.15, size))) return "center";
   return bottom < top * 0.5 ? "bottom" : "top";
 }
 
@@ -308,6 +330,7 @@ export function findTables(
   segments: Segment[],
   fills: Fill[],
   wrap: Wrap = "words",
+  page?: { width: number; height: number },
 ): { tables: TableBlock[]; rest: TextRun[] } {
   const { horizontals, verticals } = splitLines(segments);
   const grids: (Grid & { box: { x: number; y: number; width: number; height: number } })[] = [];
@@ -361,8 +384,20 @@ export function findTables(
     };
   });
 
-  // Drop single boxes that frame a large part of the page; they are borders, not tables.
-  const keep = blocks.map((block, g) => !(block.cells.length === 1 && groupLines(cellRuns[g][0]).length > MAX_BOX_LINES));
+  // Drop a single box around everything on the page: a page border. Boxes around part of it (a table of contents,
+  // a worked example, a quoted law) are one-cell tables in the source, however long.
+  const textOutside = (g: number) =>
+    rest.length > 0 || blocks.some((other, o) => o !== g && other.cells.length > 1 && !(other.x >= blocks[g].x && other.x + other.width <= blocks[g].x + blocks[g].width));
+  const keep = blocks.map(
+    (block, g) =>
+      !(
+        page &&
+        block.cells.length === 1 &&
+        block.width >= page.width * PAGE_BORDER_SHARE &&
+        block.height >= page.height * PAGE_BORDER_SHARE &&
+        !textOutside(g)
+      ),
+  );
   for (const g of blocks.keys()) {
     if (keep[g]) continue;
     rest.push(...cellRuns[g][0]);
@@ -476,7 +511,7 @@ function joinCells(top: Cell, bottom: Cell, table: TableBlock): Cell {
   const first = rest[0];
   // A line that ended before the cell was full, such as a two-line label, was broken on purpose, not by the page.
   const cut = (above: CellParagraph, below: CellParagraph) =>
-    !above.edges || !below.edges || !wouldFit(above.edges.last, below.edges.first, top.width - table.padding * 2, table.wrap);
+    !above.edges || !below.edges || !wouldFit(above.edges.last, below.edges.first, roomIn(above.edges.last, top.x + table.padding, top.x + top.width - table.padding), table.wrap);
   if (last?.kind === "text" && first?.kind === "text" && !START_MARK.test(first.text) && cut(last, first)) {
     // The same rule as a line break inside the cell decides whether the page break dropped a space.
     const above = last.edges?.last;
