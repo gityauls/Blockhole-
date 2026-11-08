@@ -8,6 +8,11 @@ export type TextRun = {
   width: number;
   size: number;
   bold: boolean;
+  /**
+   * The tagged-PDF span the text was written in, when the PDF puts each word in a span of its own (Word does).
+   * A word broken across lines stays in one span, so this tells a break inside a word from a break at a space.
+   */
+  span?: number;
 };
 
 export type Line = {
@@ -79,11 +84,14 @@ export const START_MARK = /^\s*([•·▪■□○●◦※*\-–]|\(?\d{1,2}[.)
 /**
  * Whether the start of `next` would have fitted at the end of `previous`, in `room` points from where `previous`
  * starts. If it would, the source program did not wrap there: the writer broke the line on purpose. Word breaks
- * Hangul anywhere, so only one character must fit; a program that breaks between words needs the whole first word
- * to fit, and so does Latin text.
+ * Hangul anywhere, so only one character must fit, or the Latin letters and digits it starts with ("2,4,6" of
+ * "2,4,6선식(2)", which Word breaks before "선"); a program that breaks between words needs the whole first word.
  */
 export function wouldFit(previous: Line, next: Line, room: number, wrap: Wrap): boolean {
-  const word = /^[A-Za-z0-9]/.test(next.text) || wrap === "words" ? (next.text.match(/^\S+/)?.[0].length ?? 1) : 1;
+  const word =
+    wrap === "words"
+      ? (next.text.match(/^\S+/)?.[0].length ?? 1)
+      : (next.text.match(/^[A-Za-z0-9][A-Za-z0-9.,]*/)?.[0].length ?? 1);
   const token = (next.width * word) / Math.max(1, next.text.length);
   const space = wrap === "words" ? previous.size * 0.25 : 0;
   return previous.width + space + token <= room - previous.size * FIT_SLACK;
@@ -135,20 +143,38 @@ export function groupLines(runs: TextRun[]): Line[] {
   return groups.map(toLine);
 }
 
+// Slack for glyph widths when comparing the room left on a line with a character's width, in font sizes.
+const ROOM_SLACK = 0.1;
+
 /**
- * Joins a wrapped line to the one before it. The PDF keeps no space at a line break, so whether one was there
- * depends on how the source program wraps: between words, a space was there; anywhere, only if the line
- * ended clearly short of the margin (the next word did not fit).
+ * Joins a wrapped line to the one before it. The PDF keeps no space at a line break, but the source program's
+ * greedy line filling tells whether one was there. `room` is how much space the previous line left before the
+ * edge of its column or cell.
+ * - Latin words and numbers break inside only when one word is longer than the whole line, so a line holding a
+ *   single word that continues on the next line was cut inside it ("10" / "0" is "100"); otherwise a space.
+ * - Hangul from a program that breaks between words (한글): a space, unless the line ends with a hyphen.
+ * - When the PDF tags each word as a span, the spans say it directly: one word across the break, or two.
+ * - Hangul from Word, which breaks anywhere: if the next character would have fitted in the room left, Word would
+ *   have put it there, so the line broke at a space; otherwise it broke inside a word.
  */
-export function joinWrapped(previous: Line, next: Line, wrap: Wrap, fullRight: number): string {
+export function joinWrapped(previous: Line, next: Line, wrap: Wrap, room: number): string {
   const lastRun = previous.runs.at(-1)?.text ?? "";
   const firstRun = next.runs[0]?.text ?? "";
-  const room = fullRight - (previous.x + previous.width);
-  const spaced =
-    /\s$/.test(lastRun) ||
-    /^\s/.test(firstRun) ||
-    (/[A-Za-z0-9]$/.test(previous.text) && /^[A-Za-z0-9]/.test(next.text)) ||
-    (wrap === "words" ? !/[-‐]$/.test(previous.text) : room > previous.size * 0.9);
+  if (/\s$/.test(lastRun) || /^\s/.test(firstRun)) return ` ${next.text}`;
+  const before = previous.runs.at(-1)?.span;
+  const after = next.runs[0]?.span;
+  let spaced: boolean;
+  // Word also starts a span where Hangul meets Latin letters or digits ("10" / "월"), so spans only speak for
+  // breaks with neither side Latin.
+  const latinEdge = /[A-Za-z0-9]$/.test(previous.text) || /^[A-Za-z0-9]/.test(next.text);
+  if (before !== undefined && after !== undefined && !latinEdge) spaced = before !== after;
+  else if (/[A-Za-z0-9]$/.test(previous.text) && /^[A-Za-z0-9]/.test(next.text)) spaced = /\s/.test(previous.text.trim());
+  else if (wrap === "words") spaced = !/[-‐]$/.test(previous.text);
+  else {
+    const first = next.runs[0];
+    const charWidth = first && first.text.length ? first.width / first.text.length : next.size;
+    spaced = room >= charWidth - next.size * ROOM_SLACK;
+  }
   return `${spaced ? " " : ""}${next.text}`;
 }
 
@@ -187,7 +213,7 @@ export function groupParagraphs(lines: Line[], wrap: Wrap = "words"): Paragraph[
       });
       lineCount = 1;
     } else if (current && previous) {
-      current.text += joinWrapped(previous, line, wrap, fullRight);
+      current.text += joinWrapped(previous, line, wrap, fullRight - (previous.x + previous.width));
       lineCount++;
       current.pitch = (line.y - (current.y + current.size)) / (lineCount - 1);
       current.bottom = line.y;

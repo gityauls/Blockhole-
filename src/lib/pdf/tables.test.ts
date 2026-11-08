@@ -131,11 +131,11 @@ describe("findTables", () => {
 
 describe("continueTable", () => {
   // Cells have 10pt padding, so the second column holds 170pt of text. A third value sets that text's width.
-  const page = (rows: ([string, string] | [string, string, number])[], y0 = 20) => {
+  const page = (rows: ([string, string] | [string, string, number])[], y0 = 20, wrap: "words" | "anywhere" = "words") => {
     const ys = rows.map((_, i) => y0 + i * 20);
     ys.push(y0 + rows.length * 20);
     const runs = rows.flatMap(([a, b, width], i) => [run(a, 20, y0 + i * 20 + 14), run(b, 120, y0 + i * 20 + 14, width)]);
-    return findTables(runs, grid([10, 110, 300], ys), []).tables[0];
+    return findTables(runs, grid([10, 110, 300], ys), [], wrap).tables[0];
   };
 
   it("joins matching columns and turns the repeated first row into a header", () => {
@@ -148,9 +148,10 @@ describe("continueTable", () => {
   });
 
   it("puts back together a row the page break cut in two", () => {
-    // The sentence fills its cell, so the page cut it; the label "트렐리스" had room for more, so it ended there.
-    const first = page([["구분", "기준"], ["트렐리스", "철선을 늘려 나무를 고", 168]]);
-    const second = page([["구분", "기준"], ["선식", "정해 주는 방식이다."]]);
+    // From Word, which breaks anywhere: the sentence fills its cell, so the page cut it inside "고정" ("정" did not
+    // fit in the 2pt left); the label "트렐리스" had room for more, so it ended there.
+    const first = page([["구분", "기준"], ["트렐리스", "철선을 늘려 나무를 고", 168]], 20, "anywhere");
+    const second = page([["구분", "기준"], ["선식", "정해 주는 방식이다.", 95]], 20, "anywhere");
     const joined = continueTable(first, second)!;
     expect(joined.rows).toHaveLength(2);
     expect(joined.joinedRows).toEqual([1]);

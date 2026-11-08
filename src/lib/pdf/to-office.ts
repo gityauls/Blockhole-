@@ -10,7 +10,7 @@ import {
   tableRows,
   textBoxes,
 } from "./layout";
-import { type Cell, type CellParagraph, type TableBlock, continueTable, findTables } from "./tables";
+import { type Cell, type CellItem, type CellParagraph, type TableBlock, continueTable, findTables } from "./tables";
 import { unimpose } from "./imposition";
 import { takePageNumbers } from "./page-numbers";
 import { type Sheet, buildXlsx } from "./xlsx";
@@ -25,14 +25,19 @@ const DEFAULT_PAGE = { width: 595.3, height: 841.9, top: 72, right: 72, bottom: 
 const MIN_MARGIN = 18;
 const CENTER_TOLERANCE = 12;
 // Where Word sets the baseline in a single-spaced line of the document font, in font sizes, measured from Word's own
-// PDFs: the line box of Malgun Gothic is about 1.73 sizes tall, 1.25 above the baseline and 0.48 below it.
-const LINE_ASCENT = 1.25;
-const LINE_DESCENT = 0.48;
+// PDFs: the line box of Malgun Gothic is about 1.73 sizes tall, 1.285 above the baseline and 0.445 below it. (The
+// first baseline of all five samples sat 0.4pt low at 10pt with 1.25, which spacing between lines cannot show.)
+const LINE_ASCENT = 1.285;
+const LINE_DESCENT = 0.445;
 const NATURAL_LINE = LINE_ASCENT + LINE_DESCENT;
 // Baselines closer than this share to the natural line keep Word's own line spacing.
 const LEADING_TOLERANCE = 0.05;
 // Word draws a cell border on top of the row height it is given; ours are 0.5pt (size 4).
 const BORDER_WIDTH = 0.5;
+// Word draws a table's top border this far below where the text before it ends, and starts the text after it this
+// far below the middle of its bottom border: one border width each, measured in Word's own PDF of our samples.
+const BEFORE_TABLE = BORDER_WIDTH;
+const AFTER_TABLE = BORDER_WIDTH;
 
 /** Line spacing for a paragraph of the given font size and measured baseline pitch, if Word's own would differ. */
 type Leading = (size: number, pitch?: number | null) => { line: number; lineRule: "exact" } | undefined;
@@ -62,22 +67,31 @@ export function leadingFor(ratio: number): Leading {
   };
 }
 
-// Advance widths of the document font, Malgun Gothic, as Word sets it, in font sizes. Measured from Word's PDFs.
-function malgunAdvance(char: string): number {
-  if (/[ᄀ-ᇿ　-鿿가-힯＀-￯]/.test(char)) return 1;
-  if (char === " ") return 0.506;
-  if (/[0-9]/.test(char)) return 0.551;
-  if (/[a-z]/.test(char)) return 0.5;
-  if (/[A-Z]/.test(char)) return 0.6;
-  if (/[()[\]{}]/.test(char)) return 0.313;
-  if (/[,.:;'`]/.test(char)) return 0.22;
-  if (/[-/*•"~]/.test(char)) return 0.41;
-  return char.charCodeAt(0) < 0x2000 ? 0.5 : 1;
+// Advance widths of the document font, Malgun Gothic, as Word sets it with this converter's Korean defaults, in font
+// sizes. Measured from Word's PDF of a document of repeated characters (scripts/fidelity/malgun-widths.mjs), not
+// read from the font file. Hangul, Hanja and full-width forms are one size wide.
+const MALGUN_WIDTHS: Record<string, number> = { "0": 0.551, "1": 0.551, "2": 0.551, "3": 0.551, "4": 0.551, "5": 0.551, "6": 0.551, "7": 0.551, "8": 0.551, "9": 0.551, "!": 0.289, "\"": 0.395, "#": 0.605, "$": 0.551, "%": 0.835, "&": 0.817, "'": 0.232, "(": 0.304, ")": 0.304, "*": 0.424, "+": 0.7, ",": 0.218, "-": 0.41, ".": 0.218, "/": 0.396, ":": 0.218, ";": 0.218, "<": 0.7, "=": 0.7, ">": 0.7, "?": 0.46, "@": 0.979, "A": 0.658, "B": 0.583, "C": 0.635, "D": 0.717, "E": 0.516, "F": 0.498, "G": 0.701, "H": 0.724, "I": 0.269, "J": 0.36, "K": 0.59, "L": 0.48, "M": 0.916, "N": 0.764, "O": 0.772, "P": 0.569, "Q": 0.772, "R": 0.611, "S": 0.542, "T": 0.533, "U": 0.702, "V": 0.634, "W": 0.953, "X": 0.6, "Y": 0.564, "Z": 0.581, "[": 0.304, "\\": 0.764, "]": 0.304, "^": 0.7, "_": 0.425, "`": 0.271, "a": 0.519, "b": 0.6, "c": 0.472, "d": 0.601, "e": 0.534, "f": 0.316, "g": 0.601, "h": 0.578, "i": 0.245, "j": 0.245, "k": 0.505, "l": 0.245, "m": 0.879, "n": 0.578, "o": 0.6, "p": 0.6, "q": 0.601, "r": 0.352, "s": 0.433, "t": 0.344, "u": 0.578, "v": 0.486, "w": 0.735, "x": 0.465, "y": 0.492, "z": 0.461, "{": 0.304, "|": 0.24, "}": 0.304, "~": 0.7, "·": 0.218, "•": 0.417, "※": 0.799, "→": 0.949, "←": 0.949, "↑": 0.949, "↓": 0.949, "↔": 0.95, "⇒": 0.949, "∼": 0.684, "～": 0.999, "㎜": 0.999, "㎡": 0.999, "㎝": 0.999, "㎞": 0.999, "㎏": 0.999, "ℓ": 0.331, "①": 0.999, "②": 0.999, "③": 0.999, "④": 0.999, "⑤": 0.999, "⑥": 0.999, "⑦": 0.999, "⑧": 0.999, "⑨": 0.999, "⑩": 0.999, "○": 0.999, "●": 0.999, "□": 0.999, "■": 0.999, "△": 0.999, "▲": 0.999, "▽": 0.999, "◇": 0.999, "◆": 0.999, "☞": 0.999, "✓": 0.748, "×": 0.7, "÷": 0.7, "±": 0.7, "≤": 0.7, "≥": 0.7, "≠": 0.7, "∙": 0.315, "‘": 0.23, "’": 0.23, "“": 0.378, "”": 0.378, "「": 0.569, "」": 0.569, "『": 0.516, "』": 0.516, "〈": 0.541, "〉": 0.541, "《": 0.596, "》": 0.596, "…": 0.739, "–": 0.513, "—": 1.024, "‐": 0.331, "²": 0.373, "³": 0.373, "°": 0.386, "℃": 0.949, "Ⅰ": 0.949, "Ⅱ": 0.949, "Ⅲ": 0.949, "Ⅳ": 0.949, " ": 0.499 };
+const FULL_WIDTH = /[\u1100-\u11ff\u3130-\u318f\u4e00-\u9fff\uac00-\ud7af\uff01-\uff5e]/;
+
+/** A character's advance in font sizes, or null when it was not measured. */
+function malgunAdvance(char: string): number | null {
+  if (FULL_WIDTH.test(char)) return 1;
+  return MALGUN_WIDTHS[char] ?? null;
+}
+
+// A space next to a double-byte character (Hangul, or a symbol such as • ※ ㎜) is widened toward it
+// (balanceSingleByteDoubleByteWidth); between two single-byte characters ("98 -", "² -") it keeps the font's own
+// width. Measured in Word's PDFs of our samples: 0.48-0.51 against 0.34-0.36.
+const NARROW_SPACE = 0.352;
+const DOUBLE_BYTE = /[ᄀ-ᇿ -￿]/;
+
+function spaceAdvance(before?: string, after?: string): number {
+  const wide = [before, after].some((char) => char !== undefined && DOUBLE_BYTE.test(char));
+  return wide || before === undefined || after === undefined ? MALGUN_WIDTHS[" "] : NARROW_SPACE;
 }
 
 // A line this short says too little about its spacing.
 const MIN_TRACKING_SAMPLE = 8;
-const MIN_HANGUL_SHARE = 0.6;
 const TRACKING_TOLERANCE = 0.02;
 const MAX_TRACKING = 0.1;
 const MIN_TRACKING = -0.15;
@@ -90,10 +104,12 @@ const MIN_TRACKING = -0.15;
 export function trackingOf(sample: { text: string; width: number }, size: number): number | null {
   const chars = [...sample.text];
   if (chars.length < MIN_TRACKING_SAMPLE) return null;
-  // Only Hangul widths are known exactly (one font size each); a line full of symbols and Latin says too little.
-  const hangul = chars.filter((char) => /[가-힯]/.test(char)).length;
-  if (hangul < chars.length * MIN_HANGUL_SHARE) return null;
-  const natural = chars.reduce((sum, char) => sum + malgunAdvance(char), 0) * size;
+  // Only lines made of measured characters say how they were spaced.
+  const advances = chars.map((char, i) =>
+    char === " " ? spaceAdvance(chars[i - 1], chars[i + 1]) : malgunAdvance(char),
+  );
+  if (advances.some((advance) => advance === null)) return null;
+  const natural = (advances as number[]).reduce((sum, advance) => sum + advance, 0) * size;
   return (sample.width - natural) / chars.length / size;
 }
 
@@ -116,10 +132,44 @@ export function trackingFor(samples: { size: number; last?: { text: string; widt
 }
 
 /** How text is set in one context, body or table cells: line spacing and letter spacing. */
-type Typesetting = { leading: Leading; tracking: Tracking };
+type Typesetting = { leading: Leading; tracking: Tracking; ratio: number };
 
 function typesetting(paragraphs: { size: number; pitch?: number | null; last?: { text: string; width: number } }[]): Typesetting {
-  return { leading: leadingFor(lineRatio(paragraphs)), tracking: trackingFor(paragraphs) };
+  const ratio = lineRatio(paragraphs);
+  return { leading: leadingFor(ratio), tracking: trackingFor(paragraphs), ratio };
+}
+
+// A gap counts as a blank line once it is this share of a line or more.
+const BLANK_LINE_SHARE = 0.65;
+
+/**
+ * How many blank lines the writer left before `item` in a cell: the gap beyond where Word would put it anyway,
+ * in whole lines. Word puts text right under a table, a table right under text's last line, and text one pitch
+ * under the line before.
+ */
+export function blankLinesBefore(previous: CellItem, item: CellItem, ratio: number): number {
+  const text = item.kind === "text" ? item : previous.kind === "text" ? previous : null;
+  if (!text) return 0;
+  const pitch = text.pitch ?? ratio * text.size;
+  const bottom = previous.kind === "table" ? previous.table.y + previous.table.height + AFTER_TABLE : null;
+  let extra: number;
+  if (item.kind === "text" && item.edges) {
+    const firstBaseline = item.edges.first.y;
+    extra =
+      bottom !== null
+        ? firstBaseline - (bottom + LINE_ASCENT * item.size)
+        : previous.kind === "text" && previous.edges
+          ? firstBaseline - previous.edges.last.y - pitch
+          : 0;
+  } else if (item.kind === "table") {
+    extra =
+      bottom !== null
+        ? item.table.y - BEFORE_TABLE - bottom
+        : previous.kind === "text" && previous.edges
+          ? item.table.y - BEFORE_TABLE - (previous.edges.last.y + LINE_DESCENT * previous.size)
+          : 0;
+  } else return 0;
+  return Math.max(0, Math.floor(extra / pitch + (1 - BLANK_LINE_SHARE)));
 }
 
 /**
@@ -172,8 +222,22 @@ function tableToDocx(
       ...cell.items.flatMap((item) => (item.kind === "text" && item.edges ? [item.edges.first.width, item.edges.last.width] : [])),
     );
     const cellPadding = Math.max(0, Math.min(padding, Math.floor((width - twips(widest)) / 2)));
-    const children: DocxChild[] = cell.items.map((item) =>
-      item.kind === "table"
+    const blank = (size: number, pitch: number | null | undefined) =>
+      new d.Paragraph({
+        spacing: { before: 0, after: 0, ...set.leading(size, pitch) },
+        // An empty paragraph is as tall as its paragraph mark, so the mark carries the font and size.
+        run: { size: Math.round(size * 2), font: DOCUMENT_FONT },
+        children: [],
+      });
+    const children: DocxChild[] = cell.items.flatMap((item, index) => {
+      const previous = cell.items[index - 1];
+      const blanks = previous ? blankLinesBefore(previous, item, set.ratio) : 0;
+      const sized = item.kind === "text" ? item : previous?.kind === "text" ? previous : null;
+      const lines = Array.from({ length: blanks }, () => blank(sized?.size ?? 10, sized?.pitch));
+      return [...lines, cellItemToDocx(item)];
+    });
+    function cellItemToDocx(item: CellItem): DocxChild {
+      return item.kind === "table"
         ? tableToDocx(d, item.table, width - padding * 2, false, set)
         : new d.Paragraph({
             alignment: item.align,
@@ -187,8 +251,8 @@ function tableToDocx(
                 characterSpacing: set.tracking(item.size, item.edges?.last),
               }),
             ],
-          }),
-    );
+          });
+    }
     // Word requires every cell to end with a paragraph.
     if (children.length === 0 || cell.items.at(-1)?.kind === "table") children.push(new d.Paragraph({}));
     return new d.TableCell({
@@ -292,7 +356,9 @@ function pageFlow(page: PageContent): PageFlow {
         column,
         left: span.left,
         table,
-        centered: Math.abs(middle(table) - center) < CENTER_TOLERANCE,
+        // The widest thing in a column is always in its middle; like a paragraph, a table is centered only when it
+        // also stands clear of the column's left edge.
+        centered: Math.abs(middle(table) - center) < CENTER_TOLERANCE && table.x - span.left > CENTER_TOLERANCE,
       })),
     ];
     items.push(...columnItems.sort((a, b) => a.y - b.y));
@@ -312,10 +378,10 @@ export function spacingAround(paragraph: Paragraph, before?: FlowItem, after?: F
   const nextTop = !after
     ? bottom
     : "table" in after
-      ? after.table.y
+      ? after.table.y - BEFORE_TABLE
       : after.paragraph.y + after.paragraph.size - after.paragraph.size * LINE_ASCENT;
   return {
-    before: before && "table" in before ? twips(top - (before.table.y + before.table.height)) : 0,
+    before: before && "table" in before ? twips(top - (before.table.y + before.table.height + AFTER_TABLE)) : 0,
     after: twips(nextTop - bottom),
   };
 }
@@ -368,7 +434,14 @@ async function withKoreanLayout(blob: Blob, wrap: Wrap): Promise<Blob> {
   const defaults = `<w:widowControl w:val="0"/>${wrap === "anywhere" ? '<w:wordWrap w:val="0"/>' : ""}<w:autoSpaceDE w:val="0"/><w:autoSpaceDN w:val="0"/>`;
   // The library writes no paragraph defaults of its own.
   const pPrDefault = `<w:pPrDefault><w:pPr>${defaults}</w:pPr></w:pPrDefault>`;
-  files["word/styles.xml"] = strToU8(styles.replace(/<w:pPrDefault\/>|<w:pPrDefault>[\s\S]*?<\/w:pPrDefault>/, pPrDefault));
+  // Paragraph marks without a font of their own (the paragraph Word requires after a nested table) set their line
+  // in Malgun Gothic like the text, not in Word's default font.
+  const font = `<w:rFonts w:ascii="${DOCUMENT_FONT}" w:eastAsia="${DOCUMENT_FONT}" w:hAnsi="${DOCUMENT_FONT}" w:cs="${DOCUMENT_FONT}"/>`;
+  files["word/styles.xml"] = strToU8(
+    styles
+      .replace(/<w:pPrDefault\/>|<w:pPrDefault>[\s\S]*?<\/w:pPrDefault>/, pPrDefault)
+      .replace("<w:rPrDefault><w:rPr>", `<w:rPrDefault><w:rPr>${font}`),
+  );
   return new Blob([zipSync(files)], { type: MIME.docx });
 }
 

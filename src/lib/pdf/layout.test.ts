@@ -172,14 +172,31 @@ describe("joinWrapped", () => {
   const [second] = groupLines([run("내재해성", 10, 34, 40)]);
 
   it("adds the space a word-wrapping program dropped at the line break", () => {
-    expect(joinWrapped(first, second, "words", 60)).toBe(" 내재해성");
+    expect(joinWrapped(first, second, "words", 0)).toBe(" 내재해성");
   });
 
-  it("adds no space after a break inside a word", () => {
-    expect(joinWrapped(first, second, "anywhere", 60)).toBe("내재해성");
+  it("adds no space when the next character would not have fitted on the line", () => {
+    expect(joinWrapped(first, second, "anywhere", 5)).toBe("내재해성");
   });
 
-  it("adds a space when the line ended well short of the margin", () => {
-    expect(joinWrapped(first, second, "anywhere", 100)).toBe(" 내재해성");
+  it("adds a space when the next character would have fitted, so the line broke at a space", () => {
+    expect(joinWrapped(first, second, "anywhere", 10)).toBe(" 내재해성");
+  });
+
+  it("trusts word spans over the room left: one span across the break is one word", () => {
+    const tagged = (text: string, y: number, width: number, span: number) => groupLines([{ ...run(text, 10, y, width), span }])[0];
+    // Both lines ended with 6pt left, less than a Hangul character, so the room cannot tell the two apart.
+    expect(joinWrapped(tagged("비닐 및 망", 20, 50, 3), tagged("등을", 34, 20, 5), "anywhere", 6)).toBe(" 등을");
+    expect(joinWrapped(tagged("과수", 20, 20, 7), tagged("원", 34, 10, 7), "anywhere", 6)).toBe("원");
+    // Word starts a span where Hangul meets digits, so there the room decides.
+    expect(joinWrapped(tagged("10", 20, 11, 8), tagged("월", 34, 10, 9), "anywhere", 2)).toBe("월");
+  });
+
+  it("joins a number cut inside because it was longer than the line", () => {
+    const [ten] = groupLines([run("10", 10, 20, 11)]);
+    const [zero] = groupLines([run("0", 10, 34, 5.5)]);
+    expect(joinWrapped(ten, zero, "anywhere", 2)).toBe("0");
+    const [words] = groupLines([run("length 10", 10, 20, 40)]);
+    expect(joinWrapped(words, zero, "anywhere", 2)).toBe(" 0");
   });
 });

@@ -67,6 +67,19 @@ function isBoldFont(page: PDFPageProxy, id: string): boolean {
   }
 }
 
+// Share of spans that must hold a single word before spans are trusted to mark words.
+const WORD_SPAN_SHARE = 0.9;
+const MIN_SPANS = 20;
+
+/** Whether the page tags each word as its own span, as Word does; other producers tag whole runs or nothing. */
+function wordSpans(runs: TextRun[]): boolean {
+  const texts = new Map<number, string>();
+  for (const run of runs) texts.set(run.span!, (texts.get(run.span!) ?? "") + run.text);
+  const spans = [...texts.values()].map((text) => text.trim()).filter(Boolean);
+  if (spans.length < MIN_SPANS) return false;
+  return spans.filter((text) => !/\s/.test(text)).length / spans.length >= WORD_SPAN_SHARE;
+}
+
 async function readRuns(pdfjs: PdfJs, page: PDFPageProxy): Promise<{ runs: TextRun[]; shapes: Shapes }> {
   const viewport = page.getViewport({ scale: 1 });
   // Font details such as bold are only available after the page has been parsed.
@@ -77,10 +90,12 @@ async function readRuns(pdfjs: PdfJs, page: PDFPageProxy): Promise<{ runs: TextR
     pdfjs.OPS as unknown as Record<string, number>,
     viewport.transform as [number, number, number, number, number, number],
   );
-  const { items } = await page.getTextContent();
+  const { items } = await page.getTextContent({ includeMarkedContent: true });
 
   const runs: TextRun[] = [];
+  let span = 0;
   for (const item of items) {
+    if ("type" in item && item.type !== "endMarkedContent") span++;
     if (!("str" in item)) continue;
     const [, , c, d, x, y] = pdfjs.Util.transform(viewport.transform, item.transform);
     runs.push({
@@ -90,9 +105,10 @@ async function readRuns(pdfjs: PdfJs, page: PDFPageProxy): Promise<{ runs: TextR
       width: item.width,
       size: Math.hypot(c, d),
       bold: isBoldFont(page, item.fontName),
+      span,
     });
   }
-  return { runs, shapes };
+  return { runs: wordSpans(runs) ? runs : runs.map((run) => ({ ...run, span: undefined })), shapes };
 }
 
 /** Finds each line's color by comparing the page drawn with and without its text. */

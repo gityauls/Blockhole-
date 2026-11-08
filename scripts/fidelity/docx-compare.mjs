@@ -72,8 +72,14 @@ export function orderedMatch(original, copy) {
   return previous[b.length] / a.length;
 }
 
-/** Share of original cells whose text equals a cell in the same row and column of the matching table. */
-function cellMatch(origTables, copyTables) {
+// Spaces collapsed but kept: "1면 이상" and "1면이상" differ, as they do for a reader.
+const spaced = (s) => s.replace(/\s+/g, " ").trim();
+
+/**
+ * Share of original cells whose text equals the cell in the same row and column of the matching table.
+ * `normalize` decides what counts as equal: squash ignores spaces, spaced keeps them. Misses are collected.
+ */
+function cellMatch(origTables, copyTables, normalize = squash, misses = []) {
   let total = 0;
   let same = 0;
   origTables.forEach((t, index) => {
@@ -81,7 +87,9 @@ function cellMatch(origTables, copyTables) {
     t.rows.forEach((row, r) =>
       row.forEach((cell, c) => {
         total++;
-        if (other && squash(other.rows[r]?.[c] ?? "\u0000") === squash(cell)) same++;
+        const copy = other?.rows[r]?.[c] ?? "\u0000";
+        if (normalize(copy) === normalize(cell)) same++;
+        else misses.push([spaced(cell), spaced(copy)]);
       }),
     );
   });
@@ -104,8 +112,9 @@ if (import.meta.url === `file:///${process.argv[1].replaceAll("\\", "/")}`) {
   const [origDir, name, ...copies] = process.argv.slice(2);
   const original = readDocx(path.join(origDir, `${name}.docx`));
   const origTableText = original.tables.filter((t) => t.depth === 0).map((t) => t.rows.flat().join(" ")).join("\n");
-  const rows = [["", ...Object.keys(describe(original)), "text order", "table text order", "cells exact"]];
-  rows.push(["original", ...Object.values(describe(original)), "100%", "100%", "100%"]);
+  const rows = [["", ...Object.keys(describe(original)), "text order", "table text order", "cells exact", "cells with spacing"]];
+  rows.push(["original", ...Object.values(describe(original)), "100%", "100%", "100%", "100%"]);
+  const misses = [];
   for (const entry of copies) {
     const [label, dir] = entry.split("=");
     const file = path.join(dir, `${name}.docx`);
@@ -121,8 +130,11 @@ if (import.meta.url === `file:///${process.argv[1].replaceAll("\\", "/")}`) {
       pct(orderedMatch(original.text, copy.text)),
       pct(orderedMatch(origTableText, copy.text)),
       pct(cellMatch(original.tables, copy.tables)),
+      pct(cellMatch(original.tables, copy.tables, spaced, misses)),
     ]);
   }
   console.log(`## ${name}`);
   for (const row of rows) console.log(`| ${row.join(" | ")} |`);
+  // Cells that differ only in their spaces, to see where a line break gained or lost one.
+  for (const [want, got] of misses.filter(([a, b]) => squash(a) === squash(b))) console.log(`  spacing: "${want}" ≠ "${got}"`);
 }

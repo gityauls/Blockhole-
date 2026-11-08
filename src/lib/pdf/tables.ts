@@ -253,7 +253,8 @@ function paddingOf(cells: { x: number }[], cellLines: Line[][]): number {
 
 function cellParagraphs(lines: Line[], cell: { x: number; width: number }, wrap: Wrap, padding: number): CellParagraph[] {
   if (lines.length === 0) return [];
-  const fullRight = Math.max(...lines.map((line) => line.x + line.width));
+  // The inner right edge of the cell, where the source program had to wrap.
+  const innerRight = cell.x + cell.width - padding;
   const room = cell.width - padding * 2;
   const paragraphs: { lines: Line[]; text: string }[] = [];
   let previous: Line | null = null;
@@ -269,7 +270,7 @@ function cellParagraphs(lines: Line[], cell: { x: number; width: number }, wrap:
       wouldFit(previous, line, room, wrap);
     if (startsNew) paragraphs.push({ lines: [line], text: line.text });
     else if (current && previous) {
-      current.text += joinWrapped(previous, line, wrap, fullRight);
+      current.text += joinWrapped(previous, line, wrap, innerRight - (previous.x + previous.width));
       current.lines.push(line);
     }
     previous = line;
@@ -477,8 +478,15 @@ function joinCells(top: Cell, bottom: Cell, table: TableBlock): Cell {
   const cut = (above: CellParagraph, below: CellParagraph) =>
     !above.edges || !below.edges || !wouldFit(above.edges.last, below.edges.first, top.width - table.padding * 2, table.wrap);
   if (last?.kind === "text" && first?.kind === "text" && !START_MARK.test(first.text) && cut(last, first)) {
-    const glue = /[A-Za-z0-9,]$/.test(last.text) ? " " : "";
-    items[items.length - 1] = { ...last, text: last.text + glue + first.text, align: last.align === "center" && first.align !== "center" ? first.align : last.align };
+    // The same rule as a line break inside the cell decides whether the page break dropped a space.
+    const above = last.edges?.last;
+    const below = first.edges?.first;
+    const joined =
+      above && below
+        ? // Spans are numbered per page, so they say nothing across the page break.
+          joinWrapped(above, { ...below, text: first.text, runs: below.runs.map((run) => ({ ...run, span: undefined })) }, table.wrap, top.x + top.width - table.padding - (above.x + above.width))
+        : `${/[A-Za-z0-9,]$/.test(last.text) ? " " : ""}${first.text}`;
+    items[items.length - 1] = { ...last, text: last.text + joined, align: last.align === "center" && first.align !== "center" ? first.align : last.align };
     rest.shift();
   }
   return { ...top, height: top.height + bottom.height, items: [...items, ...rest], vAlign: top.vAlign };

@@ -63,7 +63,7 @@ describe("toDocx", () => {
     const xml = strFromU8((await unzip(await toDocx([textPage])))["word/document.xml"]);
     expect(xml).toContain('<w:pgSz w:w="14400" w:h="10800"');
     // Left from the text, right no wider than the left, top so the first baseline lands where it was.
-    expect(xml).toMatch(/<w:pgMar w:top="1140" w:right="1440" w:bottom="1140" w:left="1440"/);
+    expect(xml).toMatch(/<w:pgMar w:top="1132" w:right="1440" w:bottom="1132" w:left="1440"/);
   });
 });
 
@@ -76,9 +76,10 @@ describe("pageGeometry", () => {
 describe("spacingAround", () => {
   const paragraph = { text: "제목", size: 10, bold: false, y: 60, bottom: 70, x: 72, width: 40, firstX: 72, restX: null, pitch: null, last: { text: "제목", width: 20 } };
   it("leaves the gap the page had before a table", () => {
-    // Word's line ends 0.48 sizes below the baseline, at 74.8; the table starts at 78.8.
+    // Word's line ends 0.445 sizes below the baseline, at 74.45; Word draws the table's top border (78.8) one
+    // border width below where the flow puts it, so 3.85pt are left between them.
     const table = { y: 78.8, table: { y: 78.8, height: 20 } } as unknown as Parameters<typeof spacingAround>[2];
-    expect(spacingAround(paragraph, undefined, table)).toEqual({ before: 0, after: 80 });
+    expect(spacingAround(paragraph, undefined, table)).toEqual({ before: 0, after: 77 });
   });
 });
 
@@ -118,9 +119,17 @@ describe("trackingOf", () => {
     expect(trackingOf({ text: "수확량감소환산고사결과", width: 106.7 }, 10)).toBeCloseTo(-0.03);
   });
 
-  it("does not guess from short lines or lines that are mostly symbols and Latin", () => {
+  it("does not guess from short lines or lines with characters whose width was not measured", () => {
     expect(trackingOf({ text: "보통약관", width: 30 }, 10)).toBeNull();
-    expect(trackingOf({ text: "max A (2.2~3.0m)", width: 60 }, 10)).toBeNull();
+    expect(trackingOf({ text: "면적 ∮ 적분 기호 표시", width: 100 }, 10)).toBeNull();
+  });
+
+  it("finds no spacing in text set in Malgun Gothic at normal spacing, symbols included", () => {
+    // As Word sets it: five Hangul at 1, two spaces beside Hangul at 0.499 and one between ":" and "2" at 0.352, a
+    // colon and two periods at 0.218, four digits at 0.551, the tilde at 0.7 and m at 0.879.
+    const text = "지주의 규격 : 2.2~3.0m";
+    const width = (5 + 2 * 0.499 + 0.352 + 3 * 0.218 + 4 * 0.551 + 0.7 + 0.879) * 10;
+    expect(trackingOf({ text, width }, 10)).toBeCloseTo(0, 3);
   });
 });
 
